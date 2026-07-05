@@ -1,5 +1,5 @@
 """
-database.py — SQLAlchemy models and engine configuration for AI Knowledge Notebook.
+database.py — SQLAlchemy models and engine configuration for AI Notebook.
 
 The engine is configured from the DATABASE_URL environment variable.
 UUID columns use a TypeDecorator so the same model works with both

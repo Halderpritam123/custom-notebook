@@ -1,5 +1,5 @@
 """
-main.py — FastAPI application for AI Knowledge Notebook.
+main.py — FastAPI application for AI Notebook.
 """
 
 import os
@@ -36,7 +36,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 REGISTRATION_OPEN = os.getenv("REGISTRATION_OPEN", "true").lower() == "true"
 
-app = FastAPI(title="AI Knowledge Notebook")
+app = FastAPI(title="AI Notebook")
 
 app.add_middleware(
     CORSMiddleware,

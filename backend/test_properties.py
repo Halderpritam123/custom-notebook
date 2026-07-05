@@ -1,5 +1,5 @@
 """
-test_properties.py — Property-based and unit tests for AI Knowledge Notebook.
+test_properties.py — Property-based and unit tests for AI Notebook.
 
 Covers all tasks marked with * that were skipped during initial implementation:
   1.4  — Unit test: create_all_tables() creates all tables
