@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState ,useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { expandFolder, setActiveTopicId } from '../store/topicsSlice.js';
 import { useGetTopicTreeQuery, useCreateTopicMutation, useCreateMainTopicMutation } from '../services/api.js';

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useDispatch } from 'react-redux';
-import { useLoginMutation, useRegisterMutation } from '../services/api.js';
+import { useLoginMutation, useRegisterMutation, useForgotPasswordMutation, useResetPasswordMutation } from '../services/api.js';
 import { setCredentials } from '../store/authSlice.js';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
@@ -9,15 +9,27 @@ export default function AuthPage() {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState(null);
+  const [statusMessage, setStatusMessage] = useState('');
   const [registrationOpen, setRegistrationOpen] = useState(true);
+  const [resetToken, setResetToken] = useState('');
 
   const dispatch = useDispatch();
   const [login, { isLoading: isLoggingIn }] = useLoginMutation();
   const [register, { isLoading: isRegistering }] = useRegisterMutation();
-  const isLoading = isLoggingIn || isRegistering;
+  const [forgotPassword, { isLoading: isSendingReset }] = useForgotPasswordMutation();
+  const [resetPassword, { isLoading: isResettingPassword }] = useResetPasswordMutation();
+  const isLoading = isLoggingIn || isRegistering || isSendingReset || isResettingPassword;
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tokenFromUrl = params.get('reset');
+    if (tokenFromUrl) {
+      setResetToken(tokenFromUrl);
+      setMode('reset');
+    }
+
     fetch(`${API_BASE}/auth/status`)
       .then((r) => r.json())
       .then((data) => {
@@ -30,7 +42,32 @@ export default function AuthPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
+    setStatusMessage('');
+
     try {
+      if (mode === 'forgot') {
+        const result = await forgotPassword({ email: email.trim() }).unwrap();
+        setStatusMessage(result.message);
+        return;
+      }
+
+      if (mode === 'reset') {
+        if (!resetToken) {
+          setError('Reset token is missing.');
+          return;
+        }
+        if (password !== confirmPassword) {
+          setError('Passwords do not match.');
+          return;
+        }
+        const result = await resetPassword({ token: resetToken, new_password: password }).unwrap();
+        setStatusMessage(result.message);
+        setPassword('');
+        setConfirmPassword('');
+        setMode('login');
+        return;
+      }
+
       const fn = mode === 'login' ? login : register;
       const result = await fn({ email: email.trim(), password }).unwrap();
       dispatch(setCredentials({ token: result.token, email: result.email }));
@@ -46,7 +83,7 @@ export default function AuthPage() {
           Notebook
         </h1>
         <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">
-          {mode === 'login' ? 'Sign in to your account' : 'Create a new account'}
+          {mode === 'login' ? 'Sign in to your account' : mode === 'register' ? 'Create a new account' : mode === 'forgot' ? 'Reset your password' : 'Choose a new password'}
         </p>
 
         {/* Registration closed banner */}
@@ -99,26 +136,44 @@ export default function AuthPage() {
 
         {/* Email/password form */}
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              required disabled={isLoading} placeholder="you@example.com"
-              className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700
-                         bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100
-                         rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-400
-                         disabled:opacity-50 placeholder:text-gray-400 dark:placeholder:text-gray-500" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              required disabled={isLoading} placeholder="••••••••"
-              className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700
-                         bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100
-                         rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-400
-                         disabled:opacity-50 placeholder:text-gray-400 dark:placeholder:text-gray-500" />
-          </div>
+          {(mode === 'login' || mode === 'register' || mode === 'forgot') && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Email</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                required disabled={isLoading} placeholder="you@example.com"
+                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700
+                           bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100
+                           rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-400
+                           disabled:opacity-50 placeholder:text-gray-400 dark:placeholder:text-gray-500" />
+            </div>
+          )}
+
+          {(mode === 'login' || mode === 'register' || mode === 'reset') && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Password</label>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                required disabled={isLoading} placeholder="••••••••"
+                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700
+                           bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100
+                           rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-400
+                           disabled:opacity-50 placeholder:text-gray-400 dark:placeholder:text-gray-500" />
+            </div>
+          )}
+
+          {mode === 'reset' && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Confirm Password</label>
+              <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
+                required disabled={isLoading} placeholder="••••••••"
+                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700
+                           bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100
+                           rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-400
+                           disabled:opacity-50 placeholder:text-gray-400 dark:placeholder:text-gray-500" />
+            </div>
+          )}
 
           {error && <p className="text-xs text-red-500">{error}</p>}
+          {statusMessage && <p className="text-xs text-green-600 dark:text-green-400">{statusMessage}</p>}
 
           <button type="submit" disabled={isLoading}
             className="w-full py-2 text-sm font-medium text-white bg-brand-500
@@ -126,17 +181,35 @@ export default function AuthPage() {
                        disabled:opacity-50 disabled:cursor-not-allowed
                        focus:outline-none focus:ring-2 focus:ring-brand-400">
             {isLoading
-              ? (mode === 'login' ? 'Signing in…' : 'Creating account…')
-              : (mode === 'login' ? 'Sign in' : 'Create account')}
+              ? (mode === 'login' ? 'Signing in…' : mode === 'register' ? 'Creating account…' : mode === 'forgot' ? 'Sending link…' : 'Updating password…')
+              : (mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : 'Update password')}
           </button>
         </form>
 
+        <div className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400 space-y-2">
+          {mode === 'login' && (
+            <button type="button"
+              onClick={() => { setMode('forgot'); setError(null); setStatusMessage(''); }}
+              className="text-brand-600 dark:text-brand-400 hover:underline font-medium">
+              Forgot password?
+            </button>
+          )}
+
+          {(mode === 'forgot' || mode === 'reset') && (
+            <button type="button"
+              onClick={() => { setMode('login'); setError(null); setStatusMessage(''); setPassword(''); setConfirmPassword(''); }}
+              className="text-brand-600 dark:text-brand-400 hover:underline font-medium">
+              Back to sign in
+            </button>
+          )}
+        </div>
+
         {/* Register link — hidden when registration is closed */}
-        {registrationOpen && (
+        {registrationOpen && mode !== 'forgot' && mode !== 'reset' && (
           <p className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400">
             {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
             <button type="button"
-              onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(null); }}
+              onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(null); setStatusMessage(''); }}
               className="text-brand-600 dark:text-brand-400 hover:underline font-medium">
               {mode === 'login' ? 'Register' : 'Sign in'}
             </button>

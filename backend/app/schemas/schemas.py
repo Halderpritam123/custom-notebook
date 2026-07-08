@@ -15,6 +15,15 @@ class LoginBody(BaseModel):
     password: str
 
 
+class ForgotPasswordBody(BaseModel):
+    email: str
+
+
+class ResetPasswordBody(BaseModel):
+    token: str
+    new_password: str
+
+
 class CreateTopicBody(BaseModel):
     name: str
     parent_id: str | None = None

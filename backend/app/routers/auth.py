@@ -1,6 +1,10 @@
 """
 auth.py — authentication routes (email/password + OAuth).
 """
+import smtplib
+from email.message import EmailMessage
+from urllib.parse import quote
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
@@ -10,16 +14,39 @@ from app.config import (
     BACKEND_URL, FRONTEND_URL, REGISTRATION_OPEN,
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
     GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET,
+    SMTP_FROM, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT, SMTP_USER,
 )
 from app.core.security import (
-    create_access_token, get_current_user,
-    hash_password, verify_password, find_or_create_oauth_user,
+    create_access_token, create_password_reset_token, get_current_user,
+    hash_password, verify_password, verify_password_reset_token, find_or_create_oauth_user,
 )
 from app.database import get_db
 from app.models.models import User
-from app.schemas.schemas import LoginBody, RegisterBody
+from app.schemas.schemas import ForgotPasswordBody, LoginBody, RegisterBody, ResetPasswordBody
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def send_password_reset_email(to_email: str, reset_link: str) -> None:
+    if not SMTP_HOST or not SMTP_USER or not SMTP_PASSWORD:
+        print(f"[password-reset] {to_email}: {reset_link}")
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = "Reset your Notebook password"
+    msg["From"] = SMTP_FROM or SMTP_USER
+    msg["To"] = to_email
+    msg.set_content(
+        "Hello,\n\n"
+        "We received a request to reset your password for Notebook.\n"
+        f"Open this link to choose a new password: {reset_link}\n\n"
+        "If you did not request this, you can ignore this email."
+    )
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.send_message(msg)
 
 
 @router.get("/status")
@@ -48,6 +75,38 @@ def login(body: LoginBody, db: Session = Depends(get_db)) -> dict:
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return {"token": create_access_token(str(user.id)), "email": user.email}
+
+
+@router.post("/forgot-password")
+def forgot_password(body: ForgotPasswordBody, db: Session = Depends(get_db)) -> dict:
+    if not body.email:
+        raise HTTPException(status_code=422, detail="Email required")
+
+    user = db.query(User).filter(User.email == body.email.lower()).first()
+    if user:
+        token = create_password_reset_token(user.email)
+        reset_link = f"{FRONTEND_URL}/?reset={quote(token)}"
+        send_password_reset_email(user.email, reset_link)
+
+    return {"message": "If an account exists for that email, a reset link has been sent."}
+
+
+@router.post("/reset-password")
+def reset_password(body: ResetPasswordBody, db: Session = Depends(get_db)) -> dict:
+    if not body.token or not body.new_password:
+        raise HTTPException(status_code=422, detail="Token and new password required")
+
+    email = verify_password_reset_token(body.token)
+    if not email:
+        raise HTTPException(status_code=401, detail="Invalid or expired reset token")
+
+    user = db.query(User).filter(User.email == email.lower()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.hashed_password = hash_password(body.new_password)
+    db.commit()
+    return {"message": "Password updated successfully"}
 
 
 @router.get("/me")

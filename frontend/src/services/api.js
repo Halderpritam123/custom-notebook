@@ -48,6 +48,12 @@ export const apiSlice = createApi({
     login: builder.mutation({
       query: ({ email, password }) => ({ url: '/auth/login', method: 'POST', body: { email, password } }),
     }),
+    forgotPassword: builder.mutation({
+      query: ({ email }) => ({ url: '/auth/forgot-password', method: 'POST', body: { email } }),
+    }),
+    resetPassword: builder.mutation({
+      query: ({ token, new_password }) => ({ url: '/auth/reset-password', method: 'POST', body: { token, new_password } }),
+    }),
 
     // Queries
     getTopics: builder.query({ query: () => '/topics', providesTags: ['Topics'] }),
@@ -192,6 +198,8 @@ export const apiSlice = createApi({
 export const {
   useRegisterMutation,
   useLoginMutation,
+  useForgotPasswordMutation,
+  useResetPasswordMutation,
   useGetTopicsQuery,
   useGetTopicQuery,
   useGetTopicTreeQuery,
