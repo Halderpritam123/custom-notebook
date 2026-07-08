@@ -1,111 +1,119 @@
-# Custom Notebook
+# AI Knowledge Notebook
 
-A full-stack application combining a React frontend with a Python FastAPI backend for managing notes and research topics.
+A full-stack AI-powered notebook. Add a topic, get an instant structured research summary from an LLM, then chat with it, save notes, and organize everything into categories.
+
+---
+
+## How it works
+
+```mermaid
+graph LR
+    User -->|adds topic| Frontend
+    Frontend -->|POST /topics| Backend
+    Backend -->|returns immediately| Frontend
+    Backend -->|background job| LLM
+    LLM -->|research JSON| Backend
+    Backend -->|saves to DB| PostgreSQL
+    Frontend -->|polls until ready| Backend
+```
+
+The backend responds instantly — research generation runs in the background. The UI shows a spinner until the LLM job finishes, then automatically displays the results.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 18, Vite, Redux Toolkit, RTK Query, Tailwind CSS |
+| Backend | Python, FastAPI, SQLAlchemy |
+| Database | PostgreSQL |
+| LLM | Any OpenAI-compatible API (Azure AI, OpenAI, Groq, Ollama) |
+| Auth | JWT + Google OAuth + GitHub OAuth |
+
+---
+
+## Quick Start
+
+**Prerequisites:** Python 3.10+, Node.js 18+, PostgreSQL
+
+### Backend
+
+```bash
+cd backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env    # fill in DATABASE_URL, OPENAI_API_KEY, JWT_SECRET, etc.
+uvicorn app.main:app --reload
+```
+
+Runs at `http://localhost:8000`. Interactive API docs at `/docs`.
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+# create .env with: VITE_API_BASE_URL=http://localhost:8000
+npm run dev
+```
+
+Runs at `http://localhost:5173`.
+
+### Docker
+
+```bash
+cd backend  && docker-compose up
+cd frontend && docker-compose up
+```
+
+---
 
 ## Project Structure
 
 ```
-├── backend/          # FastAPI server
-│   ├── main.py       # Application entry point
-│   ├── auth.py       # Authentication logic
-│   ├── database.py   # Database configuration
-│   ├── llm.py        # LLM integration
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/         # React + Vite application
+├── backend/
+│   ├── app/
+│   │   ├── main.py          # App setup + router registration
+│   │   ├── config.py        # All env vars
+│   │   ├── database.py      # Engine, session, Base
+│   │   ├── models/          # ORM models
+│   │   ├── schemas/         # Pydantic request bodies
+│   │   ├── routers/         # auth, topics, categories
+│   │   ├── services/        # LLM client
+│   │   └── core/            # JWT + security
+│   └── BACKEND.md           # ← Full backend documentation
+│
+├── frontend/
 │   ├── src/
-│   │   ├── components/
-│   │   ├── context/
-│   │   ├── hooks/
-│   │   ├── services/
-│   │   ├── store/     # Redux store
-│   │   └── tests/
-│   ├── package.json
-│   └── Dockerfile
+│   │   ├── components/  # React components
+│   │   ├── services/    # RTK Query API slice
+│   │   ├── store/       # Redux slices
+│   │   └── context/     # Theme provider
+│   └── FRONTEND.md      # ← Full frontend documentation
+│
 └── README.md
 ```
 
+---
+
+## Documentation
+
+| Doc | Contents |
+|-----|----------|
+| [`backend/BACKEND.md`](backend/BACKEND.md) | DB schema, all API endpoints, auth flow, LLM integration, env vars, performance notes |
+| [`frontend/FRONTEND.md`](frontend/FRONTEND.md) | Component tree, state management, cache strategy, polling, theme system, feature checklist |
+
+---
+
 ## Features
 
-- **Authentication**: Secure user authentication system
-- **Chat Interface**: Real-time chat and research capabilities
-- **Note Management**: Save and organize research notes
-- **Theme Support**: Light/dark theme switching
-- **Responsive Design**: Built with Tailwind CSS
-- **Type Safety**: Redux for state management
+- **Hierarchical topics** — organize topics into categories (VS Code-style sidebar)
+- **AI research** — instant structured summaries: explanation, mechanism, tradeoffs, interview tips, ASCII diagram
+- **Chat** — follow-up Q&A scoped to the topic
+- **Saved notes** — bookmark any AI reply as a persistent note
+- **Status tracking** — researching → reading → reviewed
+- **Dark / light theme**
+- **OAuth** — Google and GitHub sign-in
 
-## Tech Stack
-
-### Backend
-- **FastAPI**: Modern Python web framework
-- **Python**: Language runtime
-
-### Frontend
-- **React**: UI library
-- **Vite**: Build tool
-- **Redux**: State management
-- **Tailwind CSS**: Styling
-- **Nginx**: Web server (in Docker)
-
-## Getting Started
-
-### Prerequisites
-- Docker and Docker Compose
-- Node.js 16+ (for local frontend development)
-- Python 3.9+ (for local backend development)
-
-### Running with Docker
-
-```bash
-# Backend
-cd backend
-docker-compose up
-
-# Frontend (in another terminal)
-cd frontend
-docker-compose up
-```
-
-### Local Development
-
-**Backend:**
-```bash
-cd backend
-pip install -r requirements.txt
-python main.py
-```
-
-**Frontend:**
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-## API Endpoints
-
-The backend provides various endpoints for:
-- User authentication and management
-- Chat and conversation handling
-- Topic and note management
-- LLM integration
-
-## Testing
-
-```bash
-# Backend tests
-cd backend
-pytest
-
-# Frontend tests
-cd frontend
-npm test
-```
-
-## License
-
-MIT
-
-## Contributing
-
-Feel free to submit issues and enhancement requests!
+---

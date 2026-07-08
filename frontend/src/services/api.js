@@ -2,124 +2,189 @@ import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
+// Find a topic in the tree and call fn(topic) — used by all cache patchers
+function patchTopicInTree(draft, id, fn) {
+  const sid = String(id);
+  for (const folder of draft.main_topics ?? []) {
+    for (const sub of folder.sub_topics ?? []) {
+      if (String(sub.id) === sid) { fn(sub); return; }
+    }
+  }
+  for (const t of draft.root_topics ?? []) {
+    if (String(t.id) === sid) { fn(t); return; }
+  }
+}
+
 export const apiSlice = createApi({
   reducerPath: 'api',
   baseQuery: fetchBaseQuery({
     baseUrl,
-    prepareHeaders: (headers, { getState }) => {
+    prepareHeaders: (headers, { getState, endpoint }) => {
       const token = getState().auth.token;
       if (token) headers.set('Authorization', `Bearer ${token}`);
+      if (endpoint === 'getTopicTree') {
+        const etag = sessionStorage.getItem('etag:topic-tree');
+        if (etag) headers.set('If-None-Match', etag);
+      }
       return headers;
     },
+    responseHandler: async (response) => {
+      const etag = response.headers.get('etag');
+      if (etag && response.url?.includes('/topic-tree')) {
+        sessionStorage.setItem('etag:topic-tree', etag);
+      }
+      if (response.status === 304) return undefined;
+      const text = await response.text();
+      return text ? JSON.parse(text) : undefined;
+    },
   }),
-  tagTypes: ['Topics', 'Topic'],
+  tagTypes: ['Topics', 'Topic', 'TopicTree'],
   endpoints: (builder) => ({
-    // Auth endpoints
+
+    // Auth
     register: builder.mutation({
-      query: ({ email, password }) => ({
-        url: '/auth/register',
-        method: 'POST',
-        body: { email, password },
-      }),
+      query: ({ email, password }) => ({ url: '/auth/register', method: 'POST', body: { email, password } }),
     }),
     login: builder.mutation({
-      query: ({ email, password }) => ({
-        url: '/auth/login',
-        method: 'POST',
-        body: { email, password },
-      }),
+      query: ({ email, password }) => ({ url: '/auth/login', method: 'POST', body: { email, password } }),
     }),
 
-    // GET /topics — returns list of all topics
-    getTopics: builder.query({
-      query: () => '/topics',
-      providesTags: ['Topics'],
-    }),
-
-    // GET /topics/{id} — returns single topic with research + notes
+    // Queries
+    getTopics: builder.query({ query: () => '/topics', providesTags: ['Topics'] }),
     getTopic: builder.query({
       query: (id) => `/topics/${id}`,
       providesTags: (result, error, id) => [{ type: 'Topic', id }],
     }),
+    // Full tree fetched once on load, then kept fresh via in-place patches
+    getTopicTree: builder.query({ query: () => '/topic-tree', providesTags: ['TopicTree'] }),
 
-    // POST /topics — create topic and trigger research
+    // Create folder — append server result to preserve server-assigned order
+    createMainTopic: builder.mutation({
+      query: ({ name }) => ({ url: '/main-topics', method: 'POST', body: { name } }),
+      async onQueryStarted(_, { dispatch, queryFulfilled }) {
+        try {
+          const { data: folder } = await queryFulfilled;
+          dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
+            draft.main_topics.push(folder);
+          }));
+        } catch {}
+      },
+    }),
+
+    // Delete folder — remove from cache immediately, rollback on error
+    deleteMainTopic: builder.mutation({
+      query: (id) => ({ url: `/main-topics/${id}`, method: 'DELETE' }),
+      async onQueryStarted(id, { dispatch, queryFulfilled }) {
+        const p = dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
+          draft.main_topics = (draft.main_topics ?? []).filter((f) => String(f.id) !== String(id));
+        }));
+        try { await queryFulfilled; } catch { p.undo(); }
+      },
+    }),
+
+    // Rename folder — optimistic, rollback on error
+    renameMainTopic: builder.mutation({
+      query: ({ id, name }) => ({ url: `/main-topics/${id}/name`, method: 'PATCH', body: { name } }),
+      async onQueryStarted({ id, name }, { dispatch, queryFulfilled }) {
+        const p = dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
+          const f = (draft.main_topics ?? []).find((f) => String(f.id) === String(id));
+          if (f) f.name = name;
+        }));
+        try { await queryFulfilled; } catch { p.undo(); }
+      },
+    }),
+
+    // Create topic — append server result to keep insertion order
     createTopic: builder.mutation({
-      query: (name) => ({
-        url: '/topics',
-        method: 'POST',
-        body: { name },
+      query: ({ name, parent_id } = {}) => ({
+        url: '/topics', method: 'POST',
+        body: parent_id ? { name, parent_id } : { name },
       }),
-      invalidatesTags: (result) =>
-        result
-          ? ['Topics', { type: 'Topic', id: result.id }]
-          : ['Topics'],
+      invalidatesTags: (result) => result ? ['Topics', { type: 'Topic', id: result.id }] : ['Topics'],
+      async onQueryStarted({ parent_id } = {}, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          const item = { id: data.id, name: data.name, status: data.status, created_at: data.created_at };
+          dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
+            if (parent_id) {
+              const folder = (draft.main_topics ?? []).find((f) => String(f.id) === String(parent_id));
+              if (folder) folder.sub_topics.push(item);
+            } else {
+              draft.root_topics.push(item);
+            }
+          }));
+        } catch {}
+      },
     }),
 
-    // PATCH /topics/{id}/status — update topic status
+    // Rename topic — optimistic patch in tree + individual topic cache
+    renameTopic: builder.mutation({
+      query: ({ id, name }) => ({ url: `/topics/${id}/name`, method: 'PATCH', body: { name } }),
+      async onQueryStarted({ id, name }, { dispatch, queryFulfilled }) {
+        const p1 = dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
+          patchTopicInTree(draft, id, (t) => { t.name = name; });
+        }));
+        const p2 = dispatch(apiSlice.util.updateQueryData('getTopic', id, (draft) => {
+          if (draft) draft.name = name;
+        }));
+        try { await queryFulfilled; } catch { p1.undo(); p2.undo(); }
+      },
+    }),
+
+    // Update status — patch tree + individual topic, NO tree refetch
     updateTopicStatus: builder.mutation({
-      query: ({ id, status }) => ({
-        url: `/topics/${id}/status`,
-        method: 'PATCH',
-        body: { status },
-      }),
-      invalidatesTags: (result, error, { id }) => [
-        'Topics',
-        { type: 'Topic', id },
-      ],
+      query: ({ id, status }) => ({ url: `/topics/${id}/status`, method: 'PATCH', body: { status } }),
+      async onQueryStarted({ id, status }, { dispatch, queryFulfilled }) {
+        const p1 = dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
+          patchTopicInTree(draft, id, (t) => { t.status = status; });
+        }));
+        const p2 = dispatch(apiSlice.util.updateQueryData('getTopic', id, (draft) => {
+          if (draft) draft.status = status;
+        }));
+        try { await queryFulfilled; } catch { p1.undo(); p2.undo(); }
+      },
     }),
 
-    // DELETE /topics/{id} — delete topic (cascades research + notes)
+    // Delete topic — remove from cache immediately
     deleteTopic: builder.mutation({
-      query: (id) => ({
-        url: `/topics/${id}`,
-        method: 'DELETE',
-      }),
+      query: (id) => ({ url: `/topics/${id}`, method: 'DELETE' }),
       invalidatesTags: ['Topics'],
+      async onQueryStarted(id, { dispatch, queryFulfilled }) {
+        const p = dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
+          draft.root_topics = (draft.root_topics ?? []).filter((t) => String(t.id) !== String(id));
+          for (const folder of draft.main_topics ?? []) {
+            folder.sub_topics = (folder.sub_topics ?? []).filter((s) => String(s.id) !== String(id));
+          }
+        }));
+        try { await queryFulfilled; } catch { p.undo(); }
+      },
     }),
 
-    // POST /topics/{id}/chat — send chat message, get reply
+    // Retry research — patch status to researching immediately
+    retryResearch: builder.mutation({
+      query: (id) => ({ url: `/topics/${id}/retry`, method: 'POST' }),
+      invalidatesTags: (result, error, id) => ['Topics', { type: 'Topic', id }],
+      async onQueryStarted(id, { dispatch, queryFulfilled }) {
+        const p = dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
+          patchTopicInTree(draft, id, (t) => { t.status = 'researching'; });
+        }));
+        try { await queryFulfilled; } catch { p.undo(); }
+      },
+    }),
+
+    // Chat & notes — no tree involvement
     sendChatMessage: builder.mutation({
       query: ({ topicId, message, history }) => ({
-        url: `/topics/${topicId}/chat`,
-        method: 'POST',
-        body: { message, history },
+        url: `/topics/${topicId}/chat`, method: 'POST', body: { message, history },
       }),
-      // No cache tag — chat is ephemeral, managed in chatSlice
     }),
-
-    // POST /topics/{id}/notes — save a chat message as a note
     saveNote: builder.mutation({
-      query: ({ topicId, content }) => ({
-        url: `/topics/${topicId}/notes`,
-        method: 'POST',
-        body: { content },
-      }),
-      invalidatesTags: (result, error, { topicId }) => [
-        { type: 'Topic', id: topicId },
-      ],
+      query: ({ topicId, content }) => ({ url: `/topics/${topicId}/notes`, method: 'POST', body: { content } }),
+      invalidatesTags: (result, error, { topicId }) => [{ type: 'Topic', id: topicId }],
     }),
-
-    // POST /topics/{id}/retry — retry research generation for a stuck topic
-    retryResearch: builder.mutation({
-      query: (id) => ({
-        url: `/topics/${id}/retry`,
-        method: 'POST',
-      }),
-      invalidatesTags: (result, error, id) => [
-        'Topics',
-        { type: 'Topic', id },
-      ],
-    }),
-
-    // DELETE /topics/{id}/notes/{note_id} — remove a saved note
     deleteNote: builder.mutation({
-      query: ({ topicId, noteId }) => ({
-        url: `/topics/${topicId}/notes/${noteId}`,
-        method: 'DELETE',
-      }),
-      invalidatesTags: (result, error, { topicId }) => [
-        { type: 'Topic', id: topicId },
-      ],
+      query: ({ topicId, noteId }) => ({ url: `/topics/${topicId}/notes/${noteId}`, method: 'DELETE' }),
+      invalidatesTags: (result, error, { topicId }) => [{ type: 'Topic', id: topicId }],
     }),
   }),
 });
@@ -129,7 +194,12 @@ export const {
   useLoginMutation,
   useGetTopicsQuery,
   useGetTopicQuery,
+  useGetTopicTreeQuery,
   useCreateTopicMutation,
+  useCreateMainTopicMutation,
+  useDeleteMainTopicMutation,
+  useRenameTopicMutation,
+  useRenameMainTopicMutation,
   useUpdateTopicStatusMutation,
   useDeleteTopicMutation,
   useSendChatMessageMutation,

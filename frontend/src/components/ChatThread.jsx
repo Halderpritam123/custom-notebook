@@ -53,10 +53,10 @@ function AssistantMessage({ topicId, content }) {
         aria-label={isSaved ? 'Remove saved note' : 'Save as note'}
         className={`shrink-0 mt-1 p-1 rounded transition-colors
           ${isSaved
-            ? 'text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300'
+            ? 'text-brand-500 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300'
             : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'
           }
-          disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-400`}
+          disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand-400`}
       >
         {isSaved ? <BookmarkFilledIcon /> : <BookmarkOutlineIcon />}
       </button>
@@ -67,7 +67,7 @@ function AssistantMessage({ topicId, content }) {
 function UserMessage({ content }) {
   return (
     <div className="flex justify-end">
-      <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words max-w-[85%]">
+      <div className="bg-brand-500 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words max-w-[85%]">
         {content}
       </div>
     </div>
@@ -82,8 +82,8 @@ export default function ChatThread({ topicId }) {
       <div className="flex flex-col gap-3">
         {messages.map((msg, idx) =>
           msg.role === 'user'
-            ? <UserMessage key={idx} content={msg.content} />
-            : <AssistantMessage key={idx} topicId={topicId} content={msg.content} />
+            ? <UserMessage key={`${topicId}-${idx}-u`} content={msg.content} />
+            : <AssistantMessage key={`${topicId}-${idx}-a`} topicId={topicId} content={msg.content} />
         )}
       </div>
     </section>

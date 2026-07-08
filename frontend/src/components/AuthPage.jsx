@@ -105,7 +105,7 @@ export default function AuthPage() {
               required disabled={isLoading} placeholder="you@example.com"
               className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700
                          bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100
-                         rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400
+                         rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-400
                          disabled:opacity-50 placeholder:text-gray-400 dark:placeholder:text-gray-500" />
           </div>
           <div>
@@ -114,17 +114,17 @@ export default function AuthPage() {
               required disabled={isLoading} placeholder="••••••••"
               className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700
                          bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100
-                         rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400
+                         rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-400
                          disabled:opacity-50 placeholder:text-gray-400 dark:placeholder:text-gray-500" />
           </div>
 
           {error && <p className="text-xs text-red-500">{error}</p>}
 
           <button type="submit" disabled={isLoading}
-            className="w-full py-2 text-sm font-medium text-white bg-blue-600
-                       rounded-lg hover:bg-blue-700 transition-colors
+            className="w-full py-2 text-sm font-medium text-white bg-brand-500
+                       rounded-lg hover:bg-brand-600 transition-colors
                        disabled:opacity-50 disabled:cursor-not-allowed
-                       focus:outline-none focus:ring-2 focus:ring-blue-400">
+                       focus:outline-none focus:ring-2 focus:ring-brand-400">
             {isLoading
               ? (mode === 'login' ? 'Signing in…' : 'Creating account…')
               : (mode === 'login' ? 'Sign in' : 'Create account')}
@@ -137,7 +137,7 @@ export default function AuthPage() {
             {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
             <button type="button"
               onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(null); }}
-              className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
+              className="text-brand-600 dark:text-brand-400 hover:underline font-medium">
               {mode === 'login' ? 'Register' : 'Sign in'}
             </button>
           </p>

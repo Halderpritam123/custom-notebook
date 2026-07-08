@@ -1,5 +1,7 @@
-import { useSelector } from 'react-redux';
+import { useEffect, useRef, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { useGetTopicQuery, useUpdateTopicStatusMutation } from '../services/api.js';
+import { apiSlice } from '../services/api.js';
 import StatusBadge from './shared/StatusBadge.jsx';
 import ResearchView from './ResearchView.jsx';
 import SavedNotes from './SavedNotes.jsx';
@@ -21,8 +23,8 @@ function PanelHeader({ topic }) {
       {topic.status === 'reading' && (
         <button type="button" onClick={handleMarkReviewed} disabled={isUpdating}
           className="shrink-0 ml-4 px-4 py-2 text-sm font-medium text-white
-                     bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors
-                     disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-400">
+                     bg-brand-500 rounded-lg hover:bg-brand-600 transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand-400">
           {isUpdating ? 'Saving…' : 'Mark as Reviewed'}
         </button>
       )}
@@ -47,7 +49,34 @@ function ResearchingState({ topicName }) {
 
 export default function TopicPanel() {
   const activeTopicId = useSelector((state) => state.topics.activeTopicId);
-  const { data: topic, isLoading, isError } = useGetTopicQuery(activeTopicId, { skip: !activeTopicId });
+  const dispatch = useDispatch();
+  const [pollInterval, setPollInterval] = useState(0);
+  const prevStatus = useRef(null);
+
+  const { data: topic, isLoading, isError } = useGetTopicQuery(activeTopicId, {
+    skip: !activeTopicId,
+    pollingInterval: pollInterval,
+  });
+
+  useEffect(() => {
+    const status = topic?.status;
+    // When background research completes, patch the tree cache so sidebar updates
+    if (prevStatus.current === 'researching' && status && status !== 'researching') {
+      dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
+        const id = String(activeTopicId);
+        for (const folder of draft.main_topics ?? []) {
+          for (const sub of folder.sub_topics ?? []) {
+            if (String(sub.id) === id) { sub.status = status; return; }
+          }
+        }
+        for (const t of draft.root_topics ?? []) {
+          if (String(t.id) === id) { t.status = status; return; }
+        }
+      }));
+    }
+    prevStatus.current = status ?? null;
+    setPollInterval(status === 'researching' ? 3000 : 0);
+  }, [topic?.status, activeTopicId, dispatch]);
 
   if (!activeTopicId) {
     return (
@@ -67,7 +96,7 @@ export default function TopicPanel() {
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white dark:bg-gray-950">
-        <svg className="animate-spin w-6 h-6 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+        <svg className="animate-spin w-6 h-6 text-brand-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
         </svg>

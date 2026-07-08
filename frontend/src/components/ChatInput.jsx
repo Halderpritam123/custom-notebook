@@ -44,12 +44,14 @@ export default function ChatInput({ topicId, topicName }) {
           disabled={isLoading}
           placeholder={`Ask a follow-up about "${topicName}"… (Enter to send, Shift+Enter for new line)`}
           rows={2}
-          className="flex-1 resize-none rounded-xl border border-gray-300 dark:border-gray-700
-                     bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200
+          className="flex-1 resize-none rounded-xl
+                     border border-gray-200 dark:border-gray-700
+                     bg-gray-50 dark:bg-gray-800
+                     text-gray-800 dark:text-gray-200
                      placeholder-gray-400 dark:placeholder-gray-500
                      px-3 py-2 text-sm
-                     focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent
-                     disabled:bg-gray-50 dark:disabled:bg-gray-800/50 disabled:text-gray-400
+                     focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent
+                     disabled:opacity-50 disabled:cursor-not-allowed
                      transition-colors"
           aria-label="Chat message input"
         />
@@ -59,9 +61,9 @@ export default function ChatInput({ topicId, topicName }) {
           disabled={!canSubmit}
           aria-label="Send message"
           className="shrink-0 flex items-center justify-center w-10 h-10 rounded-xl
-                     bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800
+                     bg-brand-500 text-white hover:bg-brand-600 active:bg-brand-700
                      disabled:opacity-40 disabled:cursor-not-allowed
-                     transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400"
+                     transition-colors focus:outline-none focus:ring-2 focus:ring-brand-400"
         >
           {isLoading ? (
             <svg className="animate-spin w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
