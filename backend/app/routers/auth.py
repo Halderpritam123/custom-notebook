@@ -43,10 +43,14 @@ def send_password_reset_email(to_email: str, reset_link: str) -> None:
         "If you did not request this, you can ignore this email."
     )
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+    except Exception as exc:
+        print(f"[password-reset] email send failed: {exc}")
+        raise HTTPException(status_code=502, detail="Unable to send password reset email at this time.")
 
 
 @router.get("/status")
