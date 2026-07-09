@@ -14,6 +14,7 @@ export default function AuthPage() {
   const [statusMessage, setStatusMessage] = useState('');
   const [registrationOpen, setRegistrationOpen] = useState(true);
   const [resetToken, setResetToken] = useState('');
+  const [resetLink, setResetLink] = useState(null);
 
   const dispatch = useDispatch();
   const [login, { isLoading: isLoggingIn }] = useLoginMutation();
@@ -48,6 +49,7 @@ export default function AuthPage() {
       if (mode === 'forgot') {
         const result = await forgotPassword({ email: email.trim() }).unwrap();
         setStatusMessage(result.message);
+        if (result.reset_link) setResetLink(result.reset_link);
         return;
       }
 
@@ -175,21 +177,36 @@ export default function AuthPage() {
           {error && <p className="text-xs text-red-500">{error}</p>}
           {statusMessage && <p className="text-xs text-green-600 dark:text-green-400">{statusMessage}</p>}
 
+          {resetLink && (
+            <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3">
+              <p className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">Your password reset link:</p>
+              <a
+                href={resetLink}
+                className="block text-xs text-blue-600 dark:text-blue-400 underline break-all hover:text-blue-800 dark:hover:text-blue-200"
+              >
+                {resetLink}
+              </a>
+              <p className="text-xs text-blue-600 dark:text-blue-400 mt-1.5">
+                Click the link above to reset your password. Valid for 10 minutes.
+              </p>
+            </div>
+          )}
+
           <button type="submit" disabled={isLoading}
             className="w-full py-2 text-sm font-medium text-white bg-brand-500
                        rounded-lg hover:bg-brand-600 transition-colors
                        disabled:opacity-50 disabled:cursor-not-allowed
                        focus:outline-none focus:ring-2 focus:ring-brand-400">
             {isLoading
-              ? (mode === 'login' ? 'Signing in…' : mode === 'register' ? 'Creating account…' : mode === 'forgot' ? 'Sending link…' : 'Updating password…')
-              : (mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : 'Update password')}
+              ? (mode === 'login' ? 'Signing in…' : mode === 'register' ? 'Creating account…' : mode === 'forgot' ? 'Generating link…' : 'Updating password…')
+              : (mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create account' : mode === 'forgot' ? 'Generate reset link' : 'Update password')}
           </button>
         </form>
 
         <div className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400 space-y-2">
           {mode === 'login' && (
             <button type="button"
-              onClick={() => { setMode('forgot'); setError(null); setStatusMessage(''); }}
+              onClick={() => { setMode('forgot'); setError(null); setStatusMessage(''); setResetLink(null); }}
               className="text-brand-600 dark:text-brand-400 hover:underline font-medium">
               Forgot password?
             </button>
@@ -197,7 +214,7 @@ export default function AuthPage() {
 
           {(mode === 'forgot' || mode === 'reset') && (
             <button type="button"
-              onClick={() => { setMode('login'); setError(null); setStatusMessage(''); setPassword(''); setConfirmPassword(''); }}
+              onClick={() => { setMode('login'); setError(null); setStatusMessage(''); setResetLink(null); setPassword(''); setConfirmPassword(''); }}
               className="text-brand-600 dark:text-brand-400 hover:underline font-medium">
               Back to sign in
             </button>

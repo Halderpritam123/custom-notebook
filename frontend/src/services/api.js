@@ -1,4 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
+import { clearSession } from '../store/chatSlice.js';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -80,11 +81,21 @@ export const apiSlice = createApi({
     // Delete folder — remove from cache immediately, rollback on error
     deleteMainTopic: builder.mutation({
       query: (id) => ({ url: `/main-topics/${id}`, method: 'DELETE' }),
-      async onQueryStarted(id, { dispatch, queryFulfilled }) {
+      async onQueryStarted(id, { dispatch, queryFulfilled, getState }) {
+        // Capture sub-topic ids before the optimistic removal wipes them from cache
+        const tree = apiSlice.endpoints.getTopicTree.select(undefined)(getState()).data;
+        const folder = (tree?.main_topics ?? []).find((f) => String(f.id) === String(id));
+        const subTopicIds = (folder?.sub_topics ?? []).map((s) => s.id);
+
         const p = dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
           draft.main_topics = (draft.main_topics ?? []).filter((f) => String(f.id) !== String(id));
         }));
-        try { await queryFulfilled; } catch { p.undo(); }
+        try {
+          await queryFulfilled;
+          for (const subId of subTopicIds) {
+            dispatch(clearSession(subId));
+          }
+        } catch { p.undo(); }
       },
     }),
 
@@ -162,7 +173,10 @@ export const apiSlice = createApi({
             folder.sub_topics = (folder.sub_topics ?? []).filter((s) => String(s.id) !== String(id));
           }
         }));
-        try { await queryFulfilled; } catch { p.undo(); }
+        try {
+          await queryFulfilled;
+          dispatch(clearSession(id));
+        } catch { p.undo(); }
       },
     }),
 

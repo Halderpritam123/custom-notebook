@@ -89,8 +89,7 @@ cd frontend && docker-compose up
 │   │   ├── components/  # React components
 │   │   ├── services/    # RTK Query API slice
 │   │   ├── store/       # Redux slices
-│   │   └── context/     # Theme provider
-│   └── FRONTEND.md      # ← Full frontend documentation
+│   │   └── hooks/       # useTheme hook│   └── FRONTEND.md      # ← Full frontend documentation
 │
 └── README.md
 ```

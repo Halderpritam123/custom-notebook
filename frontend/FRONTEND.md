@@ -92,11 +92,8 @@ frontend/src/
 │       ├── StatusBadge.jsx      # researching / reading / reviewed pill
 │       └── ConfirmDialog.jsx    # Themed modal replacing window.confirm
 │
-├── context/
-│   └── ThemeContext.jsx         # Dark/light mode provider
-│
 ├── hooks/
-│   └── useTheme.js              # Consume ThemeContext
+│   └── useTheme.js              # Dark/light mode — reads/writes localStorage + system pref
 │
 ├── services/
 │   └── api.js                   # RTK Query API slice + all endpoints
@@ -212,21 +209,21 @@ stateDiagram-v2
 ```
 
 - `TopicPanel` polls `GET /topics/:id` every 3 seconds **only** when `topic.status === 'researching'`
+- `TopicTree` polls `GET /topic-tree` every 3 seconds when any topic in the tree has `status === 'researching'`, stops when all are done
 - When status transitions from `researching` → `reading`, the panel patches the tree cache directly so the sidebar badge updates without a tree refetch
-- `GET /topic-tree` never polls
 
 ---
 
 ## Theme System
 
-Uses Tailwind's `darkMode: 'class'` strategy. `ThemeContext` adds/removes the `dark` class on `<html>`:
+Uses Tailwind's `darkMode: 'class'` strategy. `useTheme` hook adds/removes the `dark` class on `<html>`:
 
 ```mermaid
 graph LR
-    ThemeContext -->|add/remove .dark| HTML
+    useTheme -->|add/remove .dark| HTML
     HTML -->|cascades| AllComponents
-    localStorage -->|persists preference| ThemeContext
-    SystemPreference -->|fallback| ThemeContext
+    localStorage -->|persists preference| useTheme
+    SystemPreference -->|fallback| useTheme
 ```
 
 All components use paired Tailwind classes: `bg-white dark:bg-gray-900`, `text-gray-900 dark:text-gray-100`, etc.

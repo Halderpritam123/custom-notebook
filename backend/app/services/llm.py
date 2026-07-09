@@ -48,7 +48,7 @@ def generate_research(topic_name: str) -> dict:
         {"role": "system", "content": RESEARCH_SYSTEM_PROMPT},
         {"role": "user", "content": RESEARCH_USER_TEMPLATE.format(topic_name=topic_name)},
     ]
-    response = _get_client().chat.completions.create(model=LLM_MODEL, messages=messages)
+    response = _get_client().chat.completions.create(model=LLM_MODEL, messages=messages, timeout=30)
     raw = response.choices[0].message.content
 
     stripped = re.sub(r"^```[a-zA-Z]*\n?", "", raw.strip())
@@ -74,7 +74,7 @@ def generate_chat_reply(topic_name: str, history: list) -> str:
         *history[-10:],
     ]
     try:
-        response = _get_client().chat.completions.create(model=LLM_MODEL, messages=messages)
+        response = _get_client().chat.completions.create(model=LLM_MODEL, messages=messages, timeout=30)
         return response.choices[0].message.content
     except Exception as exc:
         logger.error("Chat LLM call failed: %s", exc)

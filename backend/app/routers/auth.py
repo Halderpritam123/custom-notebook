@@ -1,8 +1,6 @@
 """
 auth.py — authentication routes (email/password + OAuth).
 """
-import smtplib
-from email.message import EmailMessage
 from urllib.parse import quote
 
 import httpx
@@ -14,7 +12,6 @@ from app.config import (
     BACKEND_URL, FRONTEND_URL, REGISTRATION_OPEN,
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
     GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET,
-    SMTP_FROM, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT, SMTP_USER,
 )
 from app.core.security import (
     create_access_token, create_password_reset_token, get_current_user,
@@ -25,32 +22,6 @@ from app.models.models import User
 from app.schemas.schemas import ForgotPasswordBody, LoginBody, RegisterBody, ResetPasswordBody
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-def send_password_reset_email(to_email: str, reset_link: str) -> None:
-    if not SMTP_HOST or not SMTP_USER or not SMTP_PASSWORD:
-        print(f"[password-reset] {to_email}: {reset_link}")
-        return
-
-    msg = EmailMessage()
-    msg["Subject"] = "Reset your Notebook password"
-    msg["From"] = SMTP_FROM or SMTP_USER
-    msg["To"] = to_email
-    msg.set_content(
-        "Hello,\n\n"
-        "We received a request to reset your password for Notebook.\n"
-        f"Open this link to choose a new password: {reset_link}\n\n"
-        "If you did not request this, you can ignore this email."
-    )
-
-    try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
-    except Exception as exc:
-        print(f"[password-reset] email send failed: {exc}")
-        raise HTTPException(status_code=502, detail="Unable to send password reset email at this time.")
 
 
 @router.get("/status")
@@ -90,9 +61,9 @@ def forgot_password(body: ForgotPasswordBody, db: Session = Depends(get_db)) -> 
     if user:
         token = create_password_reset_token(user.email)
         reset_link = f"{FRONTEND_URL}/?reset={quote(token)}"
-        send_password_reset_email(user.email, reset_link)
+        return {"message": "Use the link below to reset your password.", "reset_link": reset_link}
 
-    return {"message": "If an account exists for that email, a reset link has been sent."}
+    return {"message": "If an account exists for that email, a reset link will be shown.", "reset_link": None}
 
 
 @router.post("/reset-password")
@@ -131,19 +102,21 @@ def google_login():
 
 
 @router.get("/google/callback")
-def google_callback(code: str, db: Session = Depends(get_db)):
-    resp = httpx.post("https://oauth2.googleapis.com/token", data={
-        "code": code, "client_id": GOOGLE_CLIENT_ID,
-        "client_secret": GOOGLE_CLIENT_SECRET,
-        "redirect_uri": f"{BACKEND_URL}/auth/google/callback",
-        "grant_type": "authorization_code",
-    })
+async def google_callback(code: str, db: Session = Depends(get_db)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post("https://oauth2.googleapis.com/token", data={
+            "code": code, "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": f"{BACKEND_URL}/auth/google/callback",
+            "grant_type": "authorization_code",
+        })
     if resp.status_code != 200:
         return RedirectResponse(f"{FRONTEND_URL}?error=google_token_failed")
 
     access_token = resp.json().get("access_token")
-    info_resp = httpx.get("https://www.googleapis.com/oauth2/v2/userinfo",
-                          headers={"Authorization": f"Bearer {access_token}"})
+    async with httpx.AsyncClient() as client:
+        info_resp = await client.get("https://www.googleapis.com/oauth2/v2/userinfo",
+                                     headers={"Authorization": f"Bearer {access_token}"})
     if info_resp.status_code != 200:
         return RedirectResponse(f"{FRONTEND_URL}?error=google_userinfo_failed")
 
@@ -169,17 +142,19 @@ def github_login():
 
 
 @router.get("/github/callback")
-def github_callback(code: str, db: Session = Depends(get_db)):
-    resp = httpx.post("https://github.com/login/oauth/access_token",
-                      headers={"Accept": "application/json"},
-                      data={"client_id": GITHUB_CLIENT_ID, "client_secret": GITHUB_CLIENT_SECRET,
-                            "code": code, "redirect_uri": f"{BACKEND_URL}/auth/github/callback"})
+async def github_callback(code: str, db: Session = Depends(get_db)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post("https://github.com/login/oauth/access_token",
+                                 headers={"Accept": "application/json"},
+                                 data={"client_id": GITHUB_CLIENT_ID, "client_secret": GITHUB_CLIENT_SECRET,
+                                       "code": code, "redirect_uri": f"{BACKEND_URL}/auth/github/callback"})
     if resp.status_code != 200:
         return RedirectResponse(f"{FRONTEND_URL}?error=github_token_failed")
 
     access_token = resp.json().get("access_token")
-    user_resp = httpx.get("https://api.github.com/user",
-                          headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"})
+    async with httpx.AsyncClient() as client:
+        user_resp = await client.get("https://api.github.com/user",
+                                     headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"})
     if user_resp.status_code != 200:
         return RedirectResponse(f"{FRONTEND_URL}?error=github_userinfo_failed")
 
@@ -188,8 +163,9 @@ def github_callback(code: str, db: Session = Depends(get_db)):
     email = data.get("email")
 
     if not email:
-        emails_resp = httpx.get("https://api.github.com/user/emails",
-                                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"})
+        async with httpx.AsyncClient() as client:
+            emails_resp = await client.get("https://api.github.com/user/emails",
+                                           headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"})
         if emails_resp.status_code == 200:
             email = next(
                 (e["email"] for e in emails_resp.json() if e.get("primary") and e.get("verified")), None

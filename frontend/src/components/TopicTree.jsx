@@ -78,10 +78,10 @@ export default function TopicTree({ addMode, onAddDone }) {
   const activeTopicId = useSelector((state) => state.topics.activeTopicId);
   const searchQuery = useSelector((state) => state.topics.searchQuery);
 
+  const [pollInterval, setPollInterval] = useState(0);
+
   const { data, isLoading, isError } = useGetTopicTreeQuery(undefined, {
-    // Only poll while a topic is still researching (status updates are now cache-patched
-    // by updateTopicStatus, but research completion happens via background job on server)
-    pollingInterval: 0,
+    pollingInterval: pollInterval,
   });
 
   const mainTopics = data?.main_topics ?? [];
@@ -92,6 +92,10 @@ export default function TopicTree({ addMode, onAddDone }) {
     mainTopics.some((f) => (f.sub_topics ?? []).some((s) => s.status === 'researching')) ||
     rootTopics.some((t) => t.status === 'researching'),
   [mainTopics, rootTopics]);
+
+  useEffect(() => {
+    setPollInterval(hasResearching ? 3000 : 0);
+  }, [hasResearching]);
 
   // O(1) folder expansion lookup
   const expandedSet = useMemo(() => new Set(expandedFolderIds), [expandedFolderIds]);
