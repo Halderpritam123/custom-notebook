@@ -114,5 +114,6 @@ cd frontend && docker-compose up
 - **Status tracking** — researching → reading → reviewed
 - **Dark / light theme**
 - **OAuth** — Google and GitHub sign-in
+- **Rate limiting** — LLM routes protected per user (5/min topics, 3/min retry, 10/min chat)
 
 ---

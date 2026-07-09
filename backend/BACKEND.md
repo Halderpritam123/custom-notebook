@@ -329,3 +329,19 @@ Interactive docs available at `http://localhost:8000/docs`.
 - **Connection pooling** — `pool_size=5`, `max_overflow=10`, `pool_pre_ping=True`, `pool_recycle=300`.
 - **Async OAuth** — Google and GitHub OAuth callbacks use `httpx.AsyncClient` (non-blocking).
 - **LLM timeout** — all LLM calls have a 30-second timeout to prevent hanging background threads.
+
+---
+
+## Rate Limiting
+
+LLM-heavy routes are rate limited per authenticated user (keyed by JWT user ID — tamper-proof).
+
+| Route | Limit |
+|-------|-------|
+| `POST /topics` | 5 / minute |
+| `POST /topics/:id/retry` | 3 / minute |
+| `POST /topics/:id/chat` | 10 / minute |
+
+Exceeding the limit returns `429 Too Many Requests`.
+
+Rate limiting is implemented with `slowapi`. The key function reads `request.state.current_user.id` set by the `get_current_user` dependency — falls back to IP for unauthenticated routes.

@@ -5,8 +5,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import FRONTEND_URL
+from app.core.limiter import limiter
 from app.database import create_all_tables
 from app.routers import auth, topics, categories
 
@@ -18,6 +21,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AI Notebook", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
