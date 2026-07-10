@@ -74,14 +74,15 @@ function InlineAddInput({ mode, onDone }) {
 }
 
 export default function TopicTree({ addMode, onAddDone }) {
+  const dispatch = useDispatch();
   const expandedFolderIds = useSelector((state) => state.topics.expandedFolderIds);
   const activeTopicId = useSelector((state) => state.topics.activeTopicId);
   const searchQuery = useSelector((state) => state.topics.searchQuery);
 
+  const [pollInterval, setPollInterval] = useState(0);
+
   const { data, isLoading, isError } = useGetTopicTreeQuery(undefined, {
-    // Only poll while a topic is still researching (status updates are now cache-patched
-    // by updateTopicStatus, but research completion happens via background job on server)
-    pollingInterval: 0,
+    pollingInterval: pollInterval,
   });
 
   const mainTopics = data?.main_topics ?? [];
@@ -92,6 +93,22 @@ export default function TopicTree({ addMode, onAddDone }) {
     mainTopics.some((f) => (f.sub_topics ?? []).some((s) => s.status === 'researching')) ||
     rootTopics.some((t) => t.status === 'researching'),
   [mainTopics, rootTopics]);
+
+  useEffect(() => {
+    setPollInterval(hasResearching ? 3000 : 0);
+  }, [hasResearching]);
+
+  // When tree loads and there's an active topic from URL, expand its parent folder
+  useEffect(() => {
+    if (!data || !activeTopicId) return;
+    for (const folder of data.main_topics ?? []) {
+      const found = (folder.sub_topics ?? []).some((s) => String(s.id) === String(activeTopicId));
+      if (found) {
+        dispatch(expandFolder(folder.id));
+        break;
+      }
+    }
+  }, [data?.main_topics]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // O(1) folder expansion lookup
   const expandedSet = useMemo(() => new Set(expandedFolderIds), [expandedFolderIds]);

@@ -42,6 +42,10 @@ class CreateNoteBody(BaseModel):
     content: str
 
 
+class UpdateNoteBody(BaseModel):
+    content: str
+
+
 class CreateCategoryBody(BaseModel):
     name: str
 

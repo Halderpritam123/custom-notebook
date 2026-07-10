@@ -4,7 +4,6 @@ import { useGetTopicQuery, useUpdateTopicStatusMutation } from '../services/api.
 import { apiSlice } from '../services/api.js';
 import StatusBadge from './shared/StatusBadge.jsx';
 import ResearchView from './ResearchView.jsx';
-import SavedNotes from './SavedNotes.jsx';
 import ChatThread from './ChatThread.jsx';
 import ChatInput from './ChatInput.jsx';
 
@@ -126,8 +125,7 @@ export default function TopicPanel() {
       <PanelHeader topic={topic} />
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-8">
         <ResearchView research={topic.research} />
-        <SavedNotes topicId={topic.id} notes={topic.notes ?? []} />
-        <ChatThread topicId={topic.id} />
+        <ChatThread topicId={topic.id} savedNotes={topic.notes ?? []} />
       </div>
       <ChatInput topicId={topic.id} topicName={topic.name} />
     </div>

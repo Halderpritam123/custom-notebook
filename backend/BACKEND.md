@@ -158,13 +158,17 @@ erDiagram
 | `GET` | `/auth/status` | Check if registration is open (public) |
 | `POST` | `/auth/register` | Register with email + password |
 | `POST` | `/auth/login` | Login, returns JWT |
+| `POST` | `/auth/forgot-password` | Generate reset link (returned in response body) |
+| `POST` | `/auth/reset-password` | Reset password using token |
 | `GET` | `/auth/me` | Current user info |
 | `GET` | `/auth/google` | Start Google OAuth flow |
 | `GET` | `/auth/google/callback` | Google OAuth callback |
 | `GET` | `/auth/github` | Start GitHub OAuth flow |
 | `GET` | `/auth/github/callback` | GitHub OAuth callback |
 
-All routes except `/auth/status`, `/auth/google`, `/auth/github`, and their callbacks require a `Bearer <jwt>` header.
+All routes except `/auth/status`, `/auth/register`, `/auth/login`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/google`, `/auth/github`, and their callbacks require a `Bearer <jwt>` header.
+
+> **Password Reset** — `POST /auth/forgot-password` returns a `reset_link` directly in the JSON response. No email is sent. The frontend displays the link as a clickable URL. The token embedded in the link expires in **10 minutes**.
 
 ### Categories (main topics / folders)
 
@@ -323,3 +327,21 @@ Interactive docs available at `http://localhost:8000/docs`.
 - **Background tasks** — research generation runs after the HTTP response is sent, so `POST /topics` returns in ~50ms.
 - **ETag caching** — `/topic-tree` computes an MD5 of the serialised payload and returns `304` when unchanged.
 - **Connection pooling** — `pool_size=5`, `max_overflow=10`, `pool_pre_ping=True`, `pool_recycle=300`.
+- **Async OAuth** — Google and GitHub OAuth callbacks use `httpx.AsyncClient` (non-blocking).
+- **LLM timeout** — all LLM calls have a 30-second timeout to prevent hanging background threads.
+
+---
+
+## Rate Limiting
+
+LLM-heavy routes are rate limited per authenticated user (keyed by JWT user ID — tamper-proof).
+
+| Route | Limit |
+|-------|-------|
+| `POST /topics` | 5 / minute |
+| `POST /topics/:id/retry` | 3 / minute |
+| `POST /topics/:id/chat` | 10 / minute |
+
+Exceeding the limit returns `429 Too Many Requests`.
+
+Rate limiting is implemented with `slowapi`. The key function reads `request.state.current_user.id` set by the `get_current_user` dependency — falls back to IP for unauthenticated routes.

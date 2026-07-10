@@ -3,14 +3,15 @@ topics.py — topic CRUD, chat, notes, and research retry routes.
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.limiter import limiter
 from app.core.security import get_current_user
 from app.database import SessionLocal, get_db
 from app.models.models import Research, SavedNote, Topic, User
 from app.schemas.schemas import (
-    ChatBody, CreateNoteBody, CreateTopicBody, RenameBody, UpdateStatusBody,
+    ChatBody, CreateNoteBody, UpdateNoteBody, CreateTopicBody, RenameBody, UpdateStatusBody,
 )
 from app.services.llm import generate_chat_reply, generate_research
 
@@ -117,7 +118,9 @@ def _run_research_in_background(topic_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 @router.post("/topics", status_code=201)
+@limiter.limit("5/minute")
 def create_topic(
+    request: Request,
     body: CreateTopicBody,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -191,7 +194,9 @@ def delete_topic(topic_id: str, db: Session = Depends(get_db), current_user: Use
 
 
 @router.post("/topics/{topic_id}/retry", status_code=200)
+@limiter.limit("3/minute")
 def retry_research(
+    request: Request,
     topic_id: str, background_tasks: BackgroundTasks,
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
 ) -> dict:
@@ -207,7 +212,9 @@ def retry_research(
 
 
 @router.post("/topics/{topic_id}/chat")
+@limiter.limit("10/minute")
 def chat(
+    request: Request,
     topic_id: str, body: ChatBody,
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
 ) -> dict:
@@ -224,6 +231,23 @@ def create_note(
     topic = _owned_topic(topic_id, current_user, db)
     note = SavedNote(topic_id=topic.id, content=body.content, created_at=datetime.now(timezone.utc))
     db.add(note)
+    db.commit()
+    db.refresh(note)
+    return _serialize_note(note)
+
+
+@router.patch("/topics/{topic_id}/notes/{note_id}", status_code=200)
+def update_note(
+    topic_id: str, note_id: str, body: UpdateNoteBody,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+) -> dict:
+    if not body.content or not body.content.strip():
+        raise HTTPException(status_code=422, detail="Content must not be empty")
+    _owned_topic(topic_id, current_user, db)
+    note = db.query(SavedNote).filter(SavedNote.id == note_id, SavedNote.topic_id == topic_id).first()
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    note.content = body.content.strip()
     db.commit()
     db.refresh(note)
     return _serialize_note(note)
