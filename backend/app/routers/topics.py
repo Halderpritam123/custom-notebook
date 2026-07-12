@@ -1,9 +1,12 @@
 """
 topics.py — topic CRUD, chat, notes, and research retry routes.
 """
+import asyncio
 from datetime import datetime, timezone
+from typing import Dict
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.limiter import limiter
@@ -12,12 +15,18 @@ from app.database import SessionLocal, get_db
 from app.models.models import Research, SavedNote, Topic, User
 from app.schemas.schemas import (
     ChatBody, CreateNoteBody, UpdateNoteBody, CreateTopicBody, RenameBody, UpdateStatusBody,
+    UpdateResearchBody,
 )
 from app.services.llm import generate_chat_reply, generate_research
 
 router = APIRouter(tags=["topics"])
 
 VALID_STATUSES = {"researching", "reading", "reviewed"}
+
+# In-memory event registry: topic_id -> asyncio.Event
+# The background job sets the event when research finishes.
+# The SSE endpoint awaits it — no DB polling needed.
+_research_events: Dict[str, asyncio.Event] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +37,7 @@ def _serialize_topic_list_item(topic: Topic) -> dict:
     return {
         "id": str(topic.id),
         "name": topic.name,
+        "is_folder": False,
         "status": topic.status,
         "created_at": topic.created_at.isoformat() if topic.created_at else None,
     }
@@ -38,13 +48,14 @@ def _serialize_research(research) -> dict | None:
         return None
     return {
         "id": str(research.id),
-        "one_liner": research.one_liner,
-        "mechanism": research.mechanism,
-        "when_to_use": research.when_to_use,
-        "tradeoffs": research.tradeoffs,
-        "interview": research.interview,
-        "related": research.related,
-        "diagram": research.diagram,
+        "summary": research.summary,
+        "key_concepts": research.key_concepts,
+        "background_context": research.background_context,
+        "how_it_works": research.how_it_works,
+        "real_world_applications": research.real_world_applications,
+        "common_misconceptions": research.common_misconceptions,
+        "related_topics": research.related_topics,
+        "open_questions": research.open_questions,
     }
 
 
@@ -71,18 +82,20 @@ def _serialize_main_topic(topic: Topic) -> dict:
     return {
         "id": str(topic.id),
         "name": topic.name,
+        "is_folder": True,
         "created_at": topic.created_at.isoformat() if topic.created_at else None,
-        "sub_topics": [_serialize_topic_list_item(c) for c in (topic.children or [])],
+        "children": [
+            _serialize_main_topic(c) if c.is_folder else _serialize_topic_list_item(c)
+            for c in (topic.children or [])
+        ],
     }
 
 
-def _owned_topic(topic_id: str, user: User, db: Session) -> Topic:
-    topic = (
-        db.query(Topic)
-        .options(joinedload(Topic.research), joinedload(Topic.notes))
-        .filter(Topic.id == topic_id, Topic.user_id == user.id)
-        .first()
-    )
+def _owned_topic(topic_id: str, user: User, db: Session, load_relations: bool = True) -> Topic:
+    q = db.query(Topic).filter(Topic.id == topic_id, Topic.user_id == user.id)
+    if load_relations:
+        q = q.options(joinedload(Topic.research), joinedload(Topic.notes))
+    topic = q.first()
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
     return topic
@@ -92,14 +105,24 @@ def _owned_topic(topic_id: str, user: User, db: Session) -> Topic:
 # Background research job
 # ---------------------------------------------------------------------------
 
-def _run_research_in_background(topic_id: str) -> None:
+def _run_research_in_background(topic_id: str, loop: asyncio.AbstractEventLoop) -> None:
     db = SessionLocal()
     try:
         topic = db.query(Topic).filter(Topic.id == topic_id).first()
         if topic is None:
             return
+        ancestor_names = []
+        current = topic
+        while current.parent_id is not None:
+            parent = db.query(Topic).filter(Topic.id == current.parent_id).first()
+            if parent and parent.is_folder:
+                ancestor_names.insert(0, parent.name)
+                current = parent
+            else:
+                break
+        category_name = " > ".join(ancestor_names) if ancestor_names else None
         try:
-            data = generate_research(topic.name)
+            data = generate_research(topic.name, category_name=category_name)
             existing = db.query(Research).filter(Research.topic_id == topic_id).first()
             if existing:
                 db.delete(existing)
@@ -111,6 +134,10 @@ def _run_research_in_background(topic_id: str) -> None:
             db.rollback()
     finally:
         db.close()
+        # Signal any waiting SSE connection — runs thread-safe on the event loop
+        event = _research_events.pop(topic_id, None)
+        if event and not loop.is_closed():
+            loop.call_soon_threadsafe(event.set)
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +146,7 @@ def _run_research_in_background(topic_id: str) -> None:
 
 @router.post("/topics", status_code=201)
 @limiter.limit("5/minute")
-def create_topic(
+async def create_topic(
     request: Request,
     body: CreateTopicBody,
     background_tasks: BackgroundTasks,
@@ -142,7 +169,9 @@ def create_topic(
     db.add(topic)
     db.commit()
     db.refresh(topic)
-    background_tasks.add_task(_run_research_in_background, str(topic.id))
+    loop = asyncio.get_event_loop()
+    _research_events[str(topic.id)] = asyncio.Event()
+    background_tasks.add_task(_run_research_in_background, str(topic.id), loop)
     return _serialize_full_topic(topic)
 
 
@@ -164,7 +193,7 @@ def update_topic_status(
 ) -> dict:
     if body.status not in VALID_STATUSES:
         raise HTTPException(status_code=422, detail=f"Invalid status '{body.status}'")
-    topic = _owned_topic(topic_id, current_user, db)
+    topic = _owned_topic(topic_id, current_user, db, load_relations=False)
     topic.status = body.status
     db.commit()
     db.refresh(topic)
@@ -178,7 +207,7 @@ def rename_topic(
 ) -> dict:
     if not body.name or not body.name.strip():
         raise HTTPException(status_code=422, detail="Name must not be empty")
-    topic = _owned_topic(topic_id, current_user, db)
+    topic = _owned_topic(topic_id, current_user, db, load_relations=False)
     topic.name = body.name.strip()
     db.commit()
     db.refresh(topic)
@@ -187,7 +216,7 @@ def rename_topic(
 
 @router.delete("/topics/{topic_id}", status_code=204)
 def delete_topic(topic_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Response:
-    topic = _owned_topic(topic_id, current_user, db)
+    topic = _owned_topic(topic_id, current_user, db, load_relations=False)
     db.delete(topic)
     db.commit()
     return Response(status_code=204)
@@ -195,7 +224,7 @@ def delete_topic(topic_id: str, db: Session = Depends(get_db), current_user: Use
 
 @router.post("/topics/{topic_id}/retry", status_code=200)
 @limiter.limit("3/minute")
-def retry_research(
+async def retry_research(
     request: Request,
     topic_id: str, background_tasks: BackgroundTasks,
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
@@ -207,8 +236,94 @@ def retry_research(
         db.delete(existing)
     db.commit()
     db.refresh(topic)
-    background_tasks.add_task(_run_research_in_background, str(topic.id))
+    loop = asyncio.get_event_loop()
+    _research_events[str(topic.id)] = asyncio.Event()
+    background_tasks.add_task(_run_research_in_background, str(topic.id), loop)
     return _serialize_full_topic(topic)
+
+
+@router.get("/topics/{topic_id}/status-stream")
+async def status_stream(
+    topic_id: str,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """SSE — awaits an in-memory event set by the background job. Zero DB polling."""
+    from jose import JWTError, jwt
+    from app.config import JWT_SECRET
+    ALGORITHM = "HS256"
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    topic = db.query(Topic).filter(Topic.id == topic_id, Topic.user_id == user.id).first()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    async def event_generator():
+        # Already done — send immediately
+        if topic.status != "researching":
+            yield f"data: {topic.status}\n\n"
+            return
+
+        event = _research_events.get(topic_id)
+        if event is None:
+            # No event registered (e.g. server restarted) — send current status
+            yield f"data: {topic.status}\n\n"
+            return
+
+        try:
+            # Wait up to 5 minutes, sending keep-alives every 20s to prevent proxy timeouts
+            deadline = 300
+            elapsed = 0
+            while elapsed < deadline:
+                try:
+                    await asyncio.wait_for(asyncio.shield(event.wait()), timeout=20)
+                    break
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    elapsed += 20
+        except asyncio.CancelledError:
+            return
+
+        # One fresh DB session for the single final read — request-scoped session is already closed
+        final_db = SessionLocal()
+        try:
+            final_topic = final_db.query(Topic).filter(Topic.id == topic_id).first()
+            final_status = final_topic.status if final_topic else "reading"
+        finally:
+            final_db.close()
+        yield f"data: {final_status}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.patch("/topics/{topic_id}/research", status_code=200)
+def update_research(
+    topic_id: str, body: UpdateResearchBody,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+) -> dict:
+    topic = _owned_topic(topic_id, current_user, db)
+    research = db.query(Research).filter(Research.topic_id == topic_id).first()
+    if research is None:
+        raise HTTPException(status_code=404, detail="Research not found")
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(research, field, value)
+    db.commit()
+    db.refresh(research)
+    return _serialize_research(research)
 
 
 @router.post("/topics/{topic_id}/chat")
@@ -219,7 +334,18 @@ def chat(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
 ) -> dict:
     topic = _owned_topic(topic_id, current_user, db)
-    reply = generate_chat_reply(topic.name, list(body.history) + [{"role": "user", "content": body.message}])
+    # Walk ancestors for full context path
+    ancestor_names = []
+    current = topic
+    while current.parent_id is not None:
+        parent = db.query(Topic).filter(Topic.id == current.parent_id).first()
+        if parent and parent.is_folder:
+            ancestor_names.insert(0, parent.name)
+            current = parent
+        else:
+            break
+    category_name = " > ".join(ancestor_names) if ancestor_names else None
+    reply = generate_chat_reply(topic.name, list(body.history) + [{"role": "user", "content": body.message}], category_name=category_name)
     return {"reply": reply}
 
 

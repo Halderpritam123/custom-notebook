@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { useGetTopicQuery, useUpdateTopicStatusMutation } from '../services/api.js';
-import { apiSlice } from '../services/api.js';
+import { useGetTopicQuery, useUpdateTopicStatusMutation, apiSlice } from '../services/api.js';
+import { useResearchStream } from '../hooks/useResearchStream.js';
 import StatusBadge from './shared/StatusBadge.jsx';
 import ResearchView from './ResearchView.jsx';
 import ChatThread from './ChatThread.jsx';
@@ -49,33 +49,26 @@ function ResearchingState({ topicName }) {
 export default function TopicPanel() {
   const activeTopicId = useSelector((state) => state.topics.activeTopicId);
   const dispatch = useDispatch();
-  const [pollInterval, setPollInterval] = useState(0);
-  const prevStatus = useRef(null);
 
   const { data: topic, isLoading, isError } = useGetTopicQuery(activeTopicId, {
     skip: !activeTopicId,
-    pollingInterval: pollInterval,
   });
 
-  useEffect(() => {
-    const status = topic?.status;
-    // When background research completes, patch the tree cache so sidebar updates
-    if (prevStatus.current === 'researching' && status && status !== 'researching') {
-      dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
-        const id = String(activeTopicId);
-        for (const folder of draft.main_topics ?? []) {
-          for (const sub of folder.sub_topics ?? []) {
-            if (String(sub.id) === id) { sub.status = status; return; }
-          }
+  // SSE: when research completes, refetch topic + patch tree cache — no polling
+  useResearchStream(activeTopicId, topic?.status, (newStatus) => {
+    dispatch(apiSlice.util.invalidateTags([{ type: 'Topic', id: activeTopicId }]));
+    dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
+      const id = String(activeTopicId);
+      function patch(nodes) {
+        for (const n of nodes ?? []) {
+          if (String(n.id) === id) { n.status = newStatus; return true; }
+          if (n.is_folder && patch(n.children)) return true;
         }
-        for (const t of draft.root_topics ?? []) {
-          if (String(t.id) === id) { t.status = status; return; }
-        }
-      }));
-    }
-    prevStatus.current = status ?? null;
-    setPollInterval(status === 'researching' ? 3000 : 0);
-  }, [topic?.status, activeTopicId, dispatch]);
+        return false;
+      }
+      patch(draft.nodes);
+    }));
+  });
 
   if (!activeTopicId) {
     return (
@@ -124,7 +117,15 @@ export default function TopicPanel() {
     <div className="flex-1 flex flex-col h-full min-h-0 bg-white dark:bg-gray-950">
       <PanelHeader topic={topic} />
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-8">
-        <ResearchView research={topic.research} />
+        <ResearchView
+            topicId={topic.id}
+            research={topic.research}
+            onResearchUpdated={(updated) => {
+              dispatch(apiSlice.util.updateQueryData('getTopic', activeTopicId, (draft) => {
+                if (draft) draft.research = updated;
+              }));
+            }}
+          />
         <ChatThread topicId={topic.id} savedNotes={topic.notes ?? []} />
       </div>
       <ChatInput topicId={topic.id} topicName={topic.name} />

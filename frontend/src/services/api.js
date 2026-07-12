@@ -3,18 +3,55 @@ import { clearSession } from '../store/chatSlice.js';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
-// Find a topic in the tree and call fn(topic) — used by all cache patchers
+// ─── Tree helpers ────────────────────────────────────────────────────────────
+
+// Recursively find a node (folder or topic) by id and call fn(node)
 function patchTopicInTree(draft, id, fn) {
   const sid = String(id);
-  for (const folder of draft.main_topics ?? []) {
-    for (const sub of folder.sub_topics ?? []) {
-      if (String(sub.id) === sid) { fn(sub); return; }
+  function walk(nodes) {
+    for (const node of nodes ?? []) {
+      if (String(node.id) === sid) { fn(node); return true; }
+      if (node.is_folder && walk(node.children ?? [])) return true;
+    }
+    return false;
+  }
+  walk(draft.nodes);
+}
+
+// Recursively collect all leaf topic ids under a folder (for clearSession on delete)
+function collectTopicIds(node) {
+  if (!node.is_folder) return [node.id];
+  return (node.children ?? []).flatMap(collectTopicIds);
+}
+
+// Remove a node by id from the tree
+function removeNodeFromTree(draft, id) {
+  const sid = String(id);
+  function removeFrom(nodes) {
+    const idx = nodes.findIndex((n) => String(n.id) === sid);
+    if (idx !== -1) { nodes.splice(idx, 1); return true; }
+    for (const node of nodes) {
+      if (node.is_folder && removeFrom(node.children ?? [])) return true;
+    }
+    return false;
+  }
+  removeFrom(draft.nodes);
+}
+
+// Find a folder node by id
+function findFolder(nodes, id) {
+  const sid = String(id);
+  for (const node of nodes ?? []) {
+    if (String(node.id) === sid && node.is_folder) return node;
+    if (node.is_folder) {
+      const found = findFolder(node.children ?? [], id);
+      if (found) return found;
     }
   }
-  for (const t of draft.root_topics ?? []) {
-    if (String(t.id) === sid) { fn(t); return; }
-  }
+  return null;
 }
+
+// ─── API slice ────────────────────────────────────────────────────────────────
 
 export const apiSlice = createApi({
   reducerPath: 'api',
@@ -62,56 +99,60 @@ export const apiSlice = createApi({
       query: (id) => `/topics/${id}`,
       providesTags: (result, error, id) => [{ type: 'Topic', id }],
     }),
-    // Full tree fetched once on load, then kept fresh via in-place patches
+    // Full tree — single fetch, kept fresh via in-place patches + ETag
     getTopicTree: builder.query({ query: () => '/topic-tree', providesTags: ['TopicTree'] }),
 
-    // Create folder — append server result to preserve server-assigned order
+    // Create folder (supports nested: pass parent_id for subcategory)
     createMainTopic: builder.mutation({
-      query: ({ name }) => ({ url: '/main-topics', method: 'POST', body: { name } }),
-      async onQueryStarted(_, { dispatch, queryFulfilled }) {
+      query: ({ name, parent_id } = {}) => ({
+        url: '/main-topics', method: 'POST',
+        body: parent_id ? { name, parent_id } : { name },
+      }),
+      async onQueryStarted({ parent_id } = {}, { dispatch, queryFulfilled }) {
         try {
           const { data: folder } = await queryFulfilled;
           dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
-            draft.main_topics.push(folder);
+            if (parent_id) {
+              const parent = findFolder(draft.nodes, parent_id);
+              if (parent) { parent.children = parent.children ?? []; parent.children.push(folder); }
+            } else {
+              draft.nodes.push(folder);
+            }
           }));
         } catch {}
       },
     }),
 
-    // Delete folder — remove from cache immediately, rollback on error
+    // Delete folder
     deleteMainTopic: builder.mutation({
       query: (id) => ({ url: `/main-topics/${id}`, method: 'DELETE' }),
       async onQueryStarted(id, { dispatch, queryFulfilled, getState }) {
-        // Capture sub-topic ids before the optimistic removal wipes them from cache
         const tree = apiSlice.endpoints.getTopicTree.select(undefined)(getState()).data;
-        const folder = (tree?.main_topics ?? []).find((f) => String(f.id) === String(id));
-        const subTopicIds = (folder?.sub_topics ?? []).map((s) => s.id);
+        const node = findFolder(tree?.nodes ?? [], id);
+        const topicIds = node ? collectTopicIds(node) : [];
 
         const p = dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
-          draft.main_topics = (draft.main_topics ?? []).filter((f) => String(f.id) !== String(id));
+          removeNodeFromTree(draft, id);
         }));
         try {
           await queryFulfilled;
-          for (const subId of subTopicIds) {
-            dispatch(clearSession(subId));
-          }
+          for (const tid of topicIds) dispatch(clearSession(tid));
         } catch { p.undo(); }
       },
     }),
 
-    // Rename folder — optimistic, rollback on error
+    // Rename folder — optimistic
     renameMainTopic: builder.mutation({
       query: ({ id, name }) => ({ url: `/main-topics/${id}/name`, method: 'PATCH', body: { name } }),
       async onQueryStarted({ id, name }, { dispatch, queryFulfilled }) {
         const p = dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
-          const f = (draft.main_topics ?? []).find((f) => String(f.id) === String(id));
-          if (f) f.name = name;
+          patchTopicInTree(draft, id, (n) => { n.name = name; });
         }));
         try { await queryFulfilled; } catch { p.undo(); }
       },
     }),
 
-    // Create topic — append server result to keep insertion order
+    // Create topic leaf
     createTopic: builder.mutation({
       query: ({ name, parent_id } = {}) => ({
         url: '/topics', method: 'POST',
@@ -121,13 +162,13 @@ export const apiSlice = createApi({
       async onQueryStarted({ parent_id } = {}, { dispatch, queryFulfilled }) {
         try {
           const { data } = await queryFulfilled;
-          const item = { id: data.id, name: data.name, status: data.status, created_at: data.created_at };
+          const item = { id: data.id, name: data.name, is_folder: false, status: data.status, created_at: data.created_at };
           dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
             if (parent_id) {
-              const folder = (draft.main_topics ?? []).find((f) => String(f.id) === String(parent_id));
-              if (folder) folder.sub_topics.push(item);
+              const parent = findFolder(draft.nodes, parent_id);
+              if (parent) { parent.children = parent.children ?? []; parent.children.push(item); }
             } else {
-              draft.root_topics.push(item);
+              draft.nodes.push(item);
             }
           }));
         } catch {}
@@ -148,7 +189,7 @@ export const apiSlice = createApi({
       },
     }),
 
-    // Update status — patch tree + individual topic, NO tree refetch
+    // Update status
     updateTopicStatus: builder.mutation({
       query: ({ id, status }) => ({ url: `/topics/${id}/status`, method: 'PATCH', body: { status } }),
       async onQueryStarted({ id, status }, { dispatch, queryFulfilled }) {
@@ -162,16 +203,13 @@ export const apiSlice = createApi({
       },
     }),
 
-    // Delete topic — remove from cache immediately
+    // Delete topic leaf
     deleteTopic: builder.mutation({
       query: (id) => ({ url: `/topics/${id}`, method: 'DELETE' }),
       invalidatesTags: ['Topics'],
       async onQueryStarted(id, { dispatch, queryFulfilled }) {
         const p = dispatch(apiSlice.util.updateQueryData('getTopicTree', undefined, (draft) => {
-          draft.root_topics = (draft.root_topics ?? []).filter((t) => String(t.id) !== String(id));
-          for (const folder of draft.main_topics ?? []) {
-            folder.sub_topics = (folder.sub_topics ?? []).filter((s) => String(s.id) !== String(id));
-          }
+          removeNodeFromTree(draft, id);
         }));
         try {
           await queryFulfilled;
@@ -180,7 +218,7 @@ export const apiSlice = createApi({
       },
     }),
 
-    // Retry research — patch status to researching immediately
+    // Retry research
     retryResearch: builder.mutation({
       query: (id) => ({ url: `/topics/${id}/retry`, method: 'POST' }),
       invalidatesTags: (result, error, id) => ['Topics', { type: 'Topic', id }],
@@ -192,7 +230,7 @@ export const apiSlice = createApi({
       },
     }),
 
-    // Chat & notes — no tree involvement
+    // Chat & notes
     sendChatMessage: builder.mutation({
       query: ({ topicId, message, history }) => ({
         url: `/topics/${topicId}/chat`, method: 'POST', body: { message, history },
@@ -212,7 +250,8 @@ export const apiSlice = createApi({
         try { await queryFulfilled; } catch { p.undo(); }
       },
     }),
-    saveNote: builder.mutation({      query: ({ topicId, content }) => ({ url: `/topics/${topicId}/notes`, method: 'POST', body: { content } }),
+    saveNote: builder.mutation({
+      query: ({ topicId, content }) => ({ url: `/topics/${topicId}/notes`, method: 'POST', body: { content } }),
       async onQueryStarted({ topicId }, { dispatch, queryFulfilled }) {
         try {
           const { data: note } = await queryFulfilled;
@@ -229,6 +268,21 @@ export const apiSlice = createApi({
           if (draft) draft.notes = draft.notes.filter((n) => String(n.id) !== String(noteId));
         }));
         try { await queryFulfilled; } catch { p.undo(); }
+      },
+    }),
+
+    // Research edit
+    updateResearch: builder.mutation({
+      query: ({ topicId, ...fields }) => ({
+        url: `/topics/${topicId}/research`, method: 'PATCH', body: fields,
+      }),
+      async onQueryStarted({ topicId }, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(apiSlice.util.updateQueryData('getTopic', topicId, (draft) => {
+            if (draft) draft.research = data;
+          }));
+        } catch {}
       },
     }),
   }),
@@ -254,4 +308,5 @@ export const {
   useSaveNoteMutation,
   useDeleteNoteMutation,
   useRetryResearchMutation,
+  useUpdateResearchMutation,
 } = apiSlice;

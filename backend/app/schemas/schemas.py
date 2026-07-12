@@ -48,7 +48,19 @@ class UpdateNoteBody(BaseModel):
 
 class CreateCategoryBody(BaseModel):
     name: str
+    parent_id: str | None = None
 
 
 class RenameBody(BaseModel):
     name: str
+
+
+class UpdateResearchBody(BaseModel):
+    summary: str | None = None
+    key_concepts: str | None = None
+    background_context: str | None = None
+    how_it_works: str | None = None
+    real_world_applications: str | None = None
+    common_misconceptions: str | None = None
+    related_topics: str | None = None
+    open_questions: str | None = None

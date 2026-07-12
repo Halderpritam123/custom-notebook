@@ -29,7 +29,7 @@ function RetryIcon() {
   );
 }
 
-export default function FileRow({ topic, isActive, activeTopicId }) {
+export default function FileRow({ topic, isActive, activeTopicId, indent = 0 }) {
   const dispatch = useDispatch();
   const [deleteTopic] = useDeleteTopicMutation();
   const [retryResearch] = useRetryResearchMutation();
@@ -102,7 +102,8 @@ export default function FileRow({ topic, isActive, activeTopicId }) {
         tabIndex={0}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
-        className={`flex items-center gap-2 px-3 py-3 cursor-pointer transition-colors
+        style={{ paddingLeft: `${12 + indent}px` }}
+        className={`flex items-center gap-2 pr-3 py-3 cursor-pointer transition-colors
           hover:bg-gray-100 dark:hover:bg-gray-800/60
           ${isActive
             ? 'bg-brand-50 border-l-4 border-brand-500 dark:bg-brand-900/20 dark:border-brand-400'

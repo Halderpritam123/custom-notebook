@@ -1,6 +1,6 @@
 # AI Knowledge Notebook
 
-A full-stack AI-powered notebook. Add a topic, get an instant structured research summary from an LLM, then chat with it, save notes, and organize everything into categories.
+A full-stack AI-powered notebook. Add a topic anywhere in a nested folder hierarchy, get an instant structured research summary from an LLM, then chat with it, save notes, and track your learning status.
 
 ---
 
@@ -13,11 +13,12 @@ graph LR
     Backend -->|returns immediately| Frontend
     Backend -->|background job| LLM
     LLM -->|research JSON| Backend
-    Backend -->|saves to DB| PostgreSQL
-    Frontend -->|polls until ready| Backend
+    Backend -->|saves to DB, signals SSE| PostgreSQL
+    Backend -->|SSE push: status=reading| Frontend
+    Frontend -->|one GET /topics/:id| Backend
 ```
 
-The backend responds instantly — research generation runs in the background. The UI shows a spinner until the LLM job finishes, then automatically displays the results.
+The backend responds instantly — research generation runs in the background. The frontend opens a single SSE connection and waits for a push notification instead of polling. When research completes the UI updates automatically.
 
 ---
 
@@ -81,15 +82,16 @@ cd frontend && docker-compose up
 │   │   ├── schemas/         # Pydantic request bodies
 │   │   ├── routers/         # auth, topics, categories
 │   │   ├── services/        # LLM client
-│   │   └── core/            # JWT + security
+│   │   └── core/            # JWT + security + rate limiter
 │   └── BACKEND.md           # ← Full backend documentation
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── components/  # React components
-│   │   ├── services/    # RTK Query API slice
-│   │   ├── store/       # Redux slices
-│   │   └── hooks/       # useTheme hook│   └── FRONTEND.md      # ← Full frontend documentation
+│   │   ├── components/      # React components
+│   │   ├── services/        # RTK Query API slice
+│   │   ├── store/           # Redux slices
+│   │   └── hooks/           # useTheme, useTopicQueryParam, useResearchStream
+│   └── FRONTEND.md          # ← Full frontend documentation
 │
 └── README.md
 ```
@@ -100,20 +102,21 @@ cd frontend && docker-compose up
 
 | Doc | Contents |
 |-----|----------|
-| [`backend/BACKEND.md`](backend/BACKEND.md) | DB schema, all API endpoints, auth flow, LLM integration, env vars, performance notes |
-| [`frontend/FRONTEND.md`](frontend/FRONTEND.md) | Component tree, state management, cache strategy, polling, theme system, feature checklist |
+| [`backend/BACKEND.md`](backend/BACKEND.md) | DB schema, all API endpoints, auth flow, LLM integration, SSE, env vars, performance notes |
+| [`frontend/FRONTEND.md`](frontend/FRONTEND.md) | Component tree, state management, cache strategy, SSE, theme system, feature checklist |
 
 ---
 
 ## Features
 
-- **Hierarchical topics** — organize topics into categories (VS Code-style sidebar)
-- **AI research** — instant structured summaries: explanation, mechanism, tradeoffs, interview tips, ASCII diagram
-- **Chat** — follow-up Q&A scoped to the topic
+- **Unlimited nested folders** — organize topics into categories and subcategories at any depth (VS Code-style sidebar)
+- **Context-aware AI research** — LLM receives the full folder path (e.g. `System Design > Scaling`) for domain-scoped answers
+- **8-field research** — Summary, Key Concepts, Background & Context, How It Works, Real-World Applications, Common Misconceptions, Related Topics, Open Questions
+- **Editable research** — edit or delete individual research sections inline
+- **SSE push updates** — zero polling; backend pushes one event when research finishes
+- **Chat** — follow-up Q&A scoped to topic + ancestor context
 - **Saved notes** — bookmark any AI reply as a persistent note
 - **Status tracking** — researching → reading → reviewed
 - **Dark / light theme**
 - **OAuth** — Google and GitHub sign-in
 - **Rate limiting** — LLM routes protected per user (5/min topics, 3/min retry, 10/min chat)
-
----

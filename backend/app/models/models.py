@@ -101,13 +101,14 @@ class Research(Base):
 
     id = Column(PortableUUID, primary_key=True, default=uuid4)
     topic_id = Column(PortableUUID, ForeignKey("topics.id", ondelete="CASCADE"), nullable=False)
-    one_liner = Column(Text)
-    mechanism = Column(Text)
-    when_to_use = Column(Text)
-    tradeoffs = Column(Text)
-    interview = Column(Text)
-    related = Column(Text)
-    diagram = Column(Text)
+    summary = Column(Text)
+    key_concepts = Column(Text)
+    background_context = Column(Text)
+    how_it_works = Column(Text)
+    real_world_applications = Column(Text)
+    common_misconceptions = Column(Text)
+    related_topics = Column(Text)
+    open_questions = Column(Text)
 
     topic = relationship("Topic", back_populates="research")
 

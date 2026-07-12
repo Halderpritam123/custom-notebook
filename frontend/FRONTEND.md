@@ -20,17 +20,22 @@ graph TD
 
     subgraph SidebarTree["Sidebar Components"]
         TopicTree["TopicTree"]
-        FolderRow["FolderRow\n(category)"]
-        FileRow["FileRow\n(topic)"]
-        AddInput["InlineAddInput"]
-        SubInput["AddSubTopicInput"]
+        FolderRow["FolderRow (recursive)\ncategory at any depth"]
+        FileRow["FileRow\ntopic leaf"]
+        AddInput["InlineAddInput\n(root level)"]
+        InlineFolderInput["InlineFolderInput\n(inside folder)"]
     end
 
     subgraph PanelComponents["TopicPanel Components"]
-        Research["ResearchView"]
-        Notes["SavedNotes"]
+        Research["ResearchView\n(editable sections)"]
         Chat["ChatThread"]
         ChatIn["ChatInput"]
+    end
+
+    subgraph Hooks["Hooks"]
+        Theme["useTheme"]
+        QueryParam["useTopicQueryParam"]
+        Stream["useResearchStream\n(SSE)"]
     end
 
     subgraph State["Redux Store"]
@@ -44,24 +49,19 @@ graph TD
     TopicTree --> FolderRow
     TopicTree --> FileRow
     TopicTree --> AddInput
-    FolderRow --> SubInput
+    FolderRow --> FolderRow
+    FolderRow --> FileRow
+    FolderRow --> InlineFolderInput
     Main --> Panel
     Panel --> Research
-    Panel --> Notes
     Panel --> Chat
     Panel --> ChatIn
+    Panel --> Stream
 
     TopicTree --> API
     Panel --> API
     ChatIn --> API
-    Notes --> API
-    AuthPage --> API
-
-    TopicTree --> TopicsSlice
-    FolderRow --> TopicsSlice
-    FileRow --> TopicsSlice
-    Panel --> TopicsSlice
-    ChatIn --> ChatSlice
+    Auth --> API
 ```
 
 ---
@@ -73,39 +73,36 @@ frontend/src/
 ├── App.jsx                      # Root — auth gate, layout split
 ├── main.jsx                     # React + Redux provider mount
 ├── index.css                    # Tailwind directives
-├── setupTests.js
 │
 ├── components/
 │   ├── AuthPage.jsx             # Login / register / OAuth
 │   ├── AuthCallback.jsx         # OAuth redirect handler
 │   ├── Sidebar.jsx              # Left panel shell + header actions
-│   ├── TopicTree.jsx            # Tree list (categories + root topics)
-│   ├── FolderRow.jsx            # Category row (expand/collapse/rename/delete)
-│   ├── FileRow.jsx              # Topic row (select/rename/delete/retry)
-│   ├── AddSubTopicInput.jsx     # Inline input inside an expanded category
-│   ├── TopicPanel.jsx           # Right panel — research + notes + chat
-│   ├── ResearchView.jsx         # Renders the 7-field LLM research
-│   ├── SavedNotes.jsx           # Saved note cards
-│   ├── ChatThread.jsx           # Message list
+│   ├── TopicTree.jsx            # Tree list — renders root nodes recursively
+│   ├── FolderRow.jsx            # Recursive folder row (expand/collapse/add/rename/delete)
+│   ├── FileRow.jsx              # Topic leaf row (select/rename/delete/retry)
+│   ├── TopicPanel.jsx           # Right panel — research + chat
+│   ├── ResearchView.jsx         # 8-field editable research display
+│   ├── ChatThread.jsx           # Message list with bookmark/edit
 │   ├── ChatInput.jsx            # Textarea + send button
+│   ├── RichEditor.jsx           # TipTap rich text editor (note editing)
 │   └── shared/
 │       ├── StatusBadge.jsx      # researching / reading / reviewed pill
-│       └── ConfirmDialog.jsx    # Themed modal replacing window.confirm
+│       └── ConfirmDialog.jsx    # Modal replacing window.confirm
 │
 ├── hooks/
-│   └── useTheme.js              # Dark/light mode — reads/writes localStorage + system pref
+│   ├── useTheme.js              # Dark/light — reads/writes localStorage + system pref
+│   ├── useTopicQueryParam.js    # Syncs activeTopicId with ?topic= URL param
+│   └── useResearchStream.js     # SSE connection for research completion
 │
 ├── services/
-│   └── api.js                   # RTK Query API slice + all endpoints
+│   └── api.js                   # RTK Query API slice + all endpoints + tree helpers
 │
-├── store/
-│   ├── index.js                 # Redux store setup
-│   ├── authSlice.js             # Auth state + localStorage persistence
-│   ├── topicsSlice.js           # UI state: active topic, expanded folders, search
-│   └── chatSlice.js             # Per-topic chat message sessions
-│
-└── tests/
-    └── properties.test.js
+└── store/
+    ├── index.js                 # Redux store setup
+    ├── authSlice.js             # Auth state + localStorage persistence
+    ├── topicsSlice.js           # UI state: active topic, expanded folders, search
+    └── chatSlice.js             # Per-topic chat message sessions
 ```
 
 ---
@@ -118,7 +115,7 @@ graph LR
         Auth["authSlice\ntoken · email"]
         Topics["topicsSlice\nactiveTopicId\nexpandedFolderIds[]\nsearchQuery"]
         Chat["chatSlice\nsessions{topicId: msg[]}"]
-        Cache["RTK Query cache\ngetTopicTree\ngetTopic\ngetTopics"]
+        Cache["RTK Query cache\ngetTopicTree\ngetTopic"]
     end
 
     subgraph Actions
@@ -142,20 +139,85 @@ graph LR
 
 ### Cache strategy
 
-The `getTopicTree` result is the single source of truth for the sidebar. Every mutation patches the cache in-place via `updateQueryData` instead of refetching the full tree:
+The `getTopicTree` result is the single source of truth for the sidebar. Every mutation patches the cache in-place via `updateQueryData` instead of refetching the full tree.
+
+All tree helpers (`patchTopicInTree`, `removeNodeFromTree`, `findFolder`) recurse into `children` at any depth:
 
 | Mutation | Cache operation |
 |----------|----------------|
-| `createTopic` | Append item to `root_topics` or folder's `sub_topics` |
-| `createMainTopic` | Append folder to `main_topics` |
-| `renameTopic` | Find + mutate name in tree + individual topic cache |
-| `renameMainTopic` | Find + mutate folder name in tree |
-| `updateTopicStatus` | Find + mutate status in tree + individual topic cache |
-| `deleteTopic` | Filter out from `root_topics` and all `sub_topics` |
-| `deleteMainTopic` | Filter out from `main_topics` |
-| `retryResearch` | Set status to `researching` in tree |
+| `createTopic` | Find parent folder by id (recursive), append leaf |
+| `createMainTopic` | Find parent folder or push to root `nodes` |
+| `renameTopic` | Recursive find + mutate name in tree + individual cache |
+| `renameMainTopic` | Recursive find + mutate folder name |
+| `updateTopicStatus` | Recursive find + mutate status in tree + individual cache |
+| `deleteTopic` | Recursive remove from tree |
+| `deleteMainTopic` | Recursive remove folder + collect descendant ids for `clearSession` |
+| `retryResearch` | Recursive find + set status to `researching` |
+| `updateResearch` | Patch individual topic cache with updated research fields |
 
-`GET /topic-tree` is called **once** on load. The only time it's called again is on hard refresh or session start.
+`GET /topic-tree` is called **once** on load. The only other calls are on hard refresh.
+
+---
+
+## Tree Structure
+
+The API returns a unified recursive `nodes` array — no separate `main_topics`/`root_topics` split:
+
+```json
+{
+  "nodes": [
+    {
+      "id": "...", "name": "System Design", "is_folder": true,
+      "children": [
+        {
+          "id": "...", "name": "Scaling", "is_folder": true,
+          "children": [
+            { "id": "...", "name": "Horizontal Scaling", "is_folder": false, "status": "reading" }
+          ]
+        }
+      ]
+    },
+    { "id": "...", "name": "Root topic", "is_folder": false, "status": "reviewed" }
+  ]
+}
+```
+
+`FolderRow` is recursive — it renders `FolderRow` for subfolder children and `FileRow` for topic children at any depth with VS Code-style indentation.
+
+---
+
+## SSE Research Stream
+
+Instead of polling, `TopicPanel` uses `useResearchStream` to open a single SSE connection:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: POST /topics
+    Created --> Streaming: SSE opens\nGET /topics/:id/status-stream
+    Streaming --> Notified: Backend signals event\nSSE sends data: reading
+    Notified --> Loaded: GET /topics/:id\n(one fetch)
+    Loaded --> Reading: research displayed
+    Reading --> Reviewed: Mark as Reviewed
+    Reviewed --> [*]
+```
+
+- `useResearchStream(topicId, status, onComplete)` — opens `EventSource` only when `status === 'researching'`
+- On message: calls `onComplete(newStatus)` which invalidates the topic cache and patches the tree
+- Connection closes automatically after one event
+- Token passed as `?token=` query param (EventSource doesn't support headers)
+
+---
+
+## Folder Expansion on Refresh
+
+On hard refresh, `expandedFolderIds` resets. `TopicTree` re-expands all ancestor folders of the active topic once tree data arrives:
+
+```js
+// Finds all ancestor folder ids at any depth
+function findAncestorFolderIds(nodes, targetId, ancestors = [])
+```
+
+This ensures the active topic is always visible in the tree after refresh regardless of nesting depth.
 
 ---
 
@@ -164,59 +226,33 @@ The `getTopicTree` result is the single source of truth for the sidebar. Every m
 ```mermaid
 sequenceDiagram
     participant User
-    participant Sidebar
-    participant TopicTree
     participant FolderRow
     participant RTK as RTK Query Cache
-    participant API as Backend API
+    participant API as Backend
 
-    User->>Sidebar: Click "New Category" icon
-    Sidebar->>TopicTree: addMode="folder"
-    TopicTree->>TopicTree: Show InlineAddInput
-    User->>TopicTree: Type name, press Enter
-    TopicTree->>API: POST /main-topics { name }
-    API-->>TopicTree: 201 { id, name, sub_topics: [] }
-    TopicTree->>RTK: updateQueryData → push to main_topics
-    RTK-->>FolderRow: Re-render with new folder
+    User->>FolderRow: Click folder icon (add subfolder)
+    FolderRow->>FolderRow: setAddMode('folder'), expandFolder
+    User->>FolderRow: Type name, Enter
+    FolderRow->>API: POST /main-topics { name, parent_id }
+    API-->>FolderRow: 201 { id, name, is_folder: true, children: [] }
+    FolderRow->>RTK: findFolder(draft.nodes, parent_id) → push child
+    FolderRow->>Redux: dispatch(expandFolder(result.id))
 
-    User->>FolderRow: Click folder row
-    FolderRow->>Redux: dispatch(toggleFolder(id))
-    Redux-->>TopicTree: expandedFolderIds updated
-    TopicTree-->>FolderRow: isExpanded=true → show sub_topics
-
-    User->>FolderRow: Click "+" button
-    FolderRow->>FolderRow: showInput=true
-    User->>FolderRow: Type sub-topic name, Enter
+    User->>FolderRow: Click + (add topic)
+    FolderRow->>FolderRow: setAddMode('topic'), expandFolder
+    User->>FolderRow: Type name, Enter
     FolderRow->>API: POST /topics { name, parent_id }
     API-->>FolderRow: 201 { id, name, status: "researching" }
-    FolderRow->>RTK: updateQueryData → push to folder.sub_topics
-    FolderRow->>Redux: dispatch(setActiveTopicId(id))
+    FolderRow->>RTK: findFolder → push leaf
+    FolderRow->>Redux: dispatch(setActiveTopicId(result.id))
+    Note over FolderRow: TopicPanel opens, SSE starts
 ```
-
----
-
-## Polling Strategy
-
-Research generation is async on the backend. The frontend polls `GET /topics/:id` to detect when it completes:
-
-```mermaid
-stateDiagram-v2
-    [*] --> Created: POST /topics
-    Created --> Researching: status=researching\npoll every 3s
-    Researching --> Reading: LLM job done\nbackend patches status
-    Reading --> Reviewed: User clicks\n"Mark as Reviewed"
-    Reviewed --> [*]
-```
-
-- `TopicPanel` polls `GET /topics/:id` every 3 seconds **only** when `topic.status === 'researching'`
-- `TopicTree` polls `GET /topic-tree` every 3 seconds when any topic in the tree has `status === 'researching'`, stops when all are done
-- When status transitions from `researching` → `reading`, the panel patches the tree cache directly so the sidebar badge updates without a tree refetch
 
 ---
 
 ## Theme System
 
-Uses Tailwind's `darkMode: 'class'` strategy. `useTheme` hook adds/removes the `dark` class on `<html>`:
+`useTheme` adds/removes `.dark` on `<html>` using Tailwind's `darkMode: 'class'` strategy:
 
 ```mermaid
 graph LR
@@ -226,45 +262,43 @@ graph LR
     SystemPreference -->|fallback| useTheme
 ```
 
-All components use paired Tailwind classes: `bg-white dark:bg-gray-900`, `text-gray-900 dark:text-gray-100`, etc.
-
 ---
 
 ## Brand Color System
 
-Custom `brand` palette defined in `tailwind.config.js` — warm violet-purple, not the default Tailwind blue:
-
-| Token | Hex | Used for |
-|-------|-----|----------|
-| `brand-500` | `#8b5cf6` | Buttons, active border, user chat bubble, send button |
-| `brand-600` | `#7c3aed` | Hover state |
-| `brand-50` | `#f5f3ff` | Active item background (light mode) |
-| `brand-900/20` | — | Active item background (dark mode) |
-| `brand-400` | `#a78bfa` | Focus rings |
+| Token | Used for |
+|-------|----------|
+| `brand-500` | Buttons, active border, user chat bubble |
+| `brand-600` | Hover state |
+| `brand-50` | Active item background (light) |
+| `brand-900/20` | Active item background (dark) |
+| `brand-400` | Focus rings |
 
 ---
 
 ## Key Files Reference
 
-### `api.js` — all backend communication
+### `api.js`
 
-Every API call goes through the RTK Query `apiSlice`. Mutations use `onQueryStarted` + `updateQueryData` for immediate optimistic updates with automatic rollback on failure.
+All backend communication goes through the RTK Query `apiSlice`. Mutations use `onQueryStarted` + `updateQueryData` for immediate optimistic updates with automatic rollback on failure. Tree helper functions (`patchTopicInTree`, `findFolder`, `removeNodeFromTree`, `collectTopicIds`) handle arbitrary nesting depth.
 
-### `topicsSlice.js` — sidebar UI state
+### `topicsSlice.js`
 
 ```js
 {
-  searchQuery: '',        // live search filter
+  searchQuery: '',        // live search filter applied recursively
   activeTopicId: null,    // which topic is open in the panel
-  expandedFolderIds: [],  // which categories are expanded
+  expandedFolderIds: [],  // which folders are expanded (converted to Set for O(1) lookup)
 }
 ```
 
-`expandedFolderIds` is converted to a `Set` in `TopicTree` for O(1) lookups.
+### `chatSlice.js`
 
-### `chatSlice.js` — ephemeral chat sessions
+Chat messages are stored in Redux only — **not persisted** to the backend. Refreshing clears the session. Saved notes are persisted via `POST /topics/:id/notes`.
 
-Chat messages are stored in Redux only — they are **not persisted** to the backend. Refreshing the page clears the chat. Saved notes are persisted via `POST /topics/:id/notes`.
+### `useResearchStream.js`
+
+Opens an `EventSource` to `GET /topics/:id/status-stream?token=...` when the active topic is researching. Calls `onComplete` once and closes the connection. Cleans up on unmount.
 
 ---
 
@@ -273,7 +307,7 @@ Chat messages are stored in Redux only — they are **not persisted** to the bac
 ```bash
 cd frontend
 npm install
-cp .env.example .env        # set VITE_API_BASE_URL=http://localhost:8000
+cp .env.example .env        # VITE_API_BASE_URL=http://localhost:8000
 npm run dev                 # http://localhost:5173
 ```
 
@@ -287,7 +321,5 @@ npm run dev                 # http://localhost:5173
 
 ```bash
 npm run build    # outputs to dist/
-npm run preview  # preview the production build locally
+npm run preview  # preview production build
 ```
-
----

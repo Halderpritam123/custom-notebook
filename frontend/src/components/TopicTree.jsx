@@ -1,11 +1,11 @@
-import { useMemo, useRef, useState ,useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { expandFolder, setActiveTopicId } from '../store/topicsSlice.js';
 import { useGetTopicTreeQuery, useCreateTopicMutation, useCreateMainTopicMutation } from '../services/api.js';
 import FolderRow from './FolderRow.jsx';
 import FileRow from './FileRow.jsx';
 
-// Inline input shown at top of tree when addMode is active
+// Inline input shown at top of tree when addMode is active (root-level only)
 function InlineAddInput({ mode, onDone }) {
   const dispatch = useDispatch();
   const [name, setName] = useState('');
@@ -45,8 +45,6 @@ function InlineAddInput({ mode, onDone }) {
     }
   };
 
-  const handleKeyDown = (e) => { if (e.key === 'Escape') onDone(); };
-
   return (
     <div className="px-2 py-1.5 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
       <form onSubmit={handleSubmit} className="flex items-center gap-1.5">
@@ -56,7 +54,7 @@ function InlineAddInput({ mode, onDone }) {
           type="text"
           value={name}
           onChange={(e) => { setName(e.target.value); setError(''); }}
-          onKeyDown={handleKeyDown}
+          onKeyDown={(e) => { if (e.key === 'Escape') onDone(); }}
           placeholder={placeholder}
           disabled={isLoading}
           className="flex-1 min-w-0 px-2 py-1 text-sm bg-transparent border border-brand-400 rounded
@@ -73,67 +71,63 @@ function InlineAddInput({ mode, onDone }) {
   );
 }
 
+// Recursively filter nodes by search query
+function filterNodes(nodes, lq) {
+  return nodes
+    .map((node) => {
+      if (node.is_folder) {
+        const filteredChildren = filterNodes(node.children ?? [], lq);
+        if (node.name.toLowerCase().includes(lq) || filteredChildren.length > 0) {
+          return { ...node, children: filteredChildren };
+        }
+        return null;
+      }
+      return node.name.toLowerCase().includes(lq) ? node : null;
+    })
+    .filter(Boolean);
+}
+
+// Recursively find ALL ancestor folder ids of a topic id (deepest first → root)
+function findAncestorFolderIds(nodes, targetId, ancestors = []) {
+  for (const node of nodes ?? []) {
+    if (node.is_folder) {
+      // check direct children first
+      for (const child of node.children ?? []) {
+        if (String(child.id) === String(targetId)) {
+          return [...ancestors, String(node.id)];
+        }
+      }
+      // recurse deeper
+      const found = findAncestorFolderIds(node.children, targetId, [...ancestors, String(node.id)]);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 export default function TopicTree({ addMode, onAddDone }) {
   const dispatch = useDispatch();
-  const expandedFolderIds = useSelector((state) => state.topics.expandedFolderIds);
   const activeTopicId = useSelector((state) => state.topics.activeTopicId);
   const searchQuery = useSelector((state) => state.topics.searchQuery);
 
-  const [pollInterval, setPollInterval] = useState(0);
+  const { data, isLoading, isError } = useGetTopicTreeQuery(undefined);
 
-  const { data, isLoading, isError } = useGetTopicTreeQuery(undefined, {
-    pollingInterval: pollInterval,
-  });
+  const nodes = data?.nodes ?? [];
 
-  const mainTopics = data?.main_topics ?? [];
-  const rootTopics = data?.root_topics ?? [];
-
-  // Poll only while something is researching — background job updates status server-side
-  const hasResearching = useMemo(() =>
-    mainTopics.some((f) => (f.sub_topics ?? []).some((s) => s.status === 'researching')) ||
-    rootTopics.some((t) => t.status === 'researching'),
-  [mainTopics, rootTopics]);
-
-  useEffect(() => {
-    setPollInterval(hasResearching ? 3000 : 0);
-  }, [hasResearching]);
-
-  // When tree loads and there's an active topic from URL, expand its parent folder
+  // Auto-expand all ancestor folders of the active topic when tree data arrives
   useEffect(() => {
     if (!data || !activeTopicId) return;
-    for (const folder of data.main_topics ?? []) {
-      const found = (folder.sub_topics ?? []).some((s) => String(s.id) === String(activeTopicId));
-      if (found) {
-        dispatch(expandFolder(folder.id));
-        break;
-      }
+    const ancestors = findAncestorFolderIds(nodes, activeTopicId);
+    if (ancestors?.length) {
+      ancestors.forEach((id) => dispatch(expandFolder(id)));
     }
-  }, [data?.main_topics]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, activeTopicId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // O(1) folder expansion lookup
-  const expandedSet = useMemo(() => new Set(expandedFolderIds), [expandedFolderIds]);
+  const filteredNodes = useMemo(() => {
+    if (!searchQuery) return nodes;
+    return filterNodes(nodes, searchQuery.toLowerCase());
+  }, [nodes, searchQuery]);
 
-  // Filtered lists — only recalculate when data or query changes
-  const { filteredMainTopics, filteredRootTopics } = useMemo(() => {
-    const lq = searchQuery.toLowerCase();
-    return {
-      filteredMainTopics: searchQuery
-        ? mainTopics
-            .map((folder) => ({
-              ...folder,
-              sub_topics: (folder.sub_topics ?? []).filter((s) =>
-                s.name.toLowerCase().includes(lq)
-              ),
-            }))
-            .filter((f) => f.name.toLowerCase().includes(lq) || f.sub_topics.length > 0)
-        : mainTopics,
-      filteredRootTopics: rootTopics.filter((t) =>
-        t.name.toLowerCase().includes(lq)
-      ),
-    };
-  }, [mainTopics, rootTopics, searchQuery]);
-
-  // ALL hooks above this line — early returns only below
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500">
@@ -150,7 +144,7 @@ export default function TopicTree({ addMode, onAddDone }) {
     );
   }
 
-  const isEmpty = filteredMainTopics.length === 0 && filteredRootTopics.length === 0;
+  const isEmpty = filteredNodes.length === 0;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -162,12 +156,11 @@ export default function TopicTree({ addMode, onAddDone }) {
         </div>
       ) : (
         <ul className="flex-1 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
-          {filteredMainTopics.map((folder) => (
-            <FolderRow key={folder.id} folder={folder} isExpanded={expandedSet.has(folder.id)} />
-          ))}
-          {filteredRootTopics.map((topic) => (
-            <FileRow key={topic.id} topic={topic} isActive={topic.id === activeTopicId} activeTopicId={activeTopicId} />
-          ))}
+          {filteredNodes.map((node) =>
+            node.is_folder
+              ? <FolderRow key={node.id} folder={node} depth={0} />
+              : <FileRow key={node.id} topic={node} isActive={node.id === activeTopicId} activeTopicId={activeTopicId} />
+          )}
         </ul>
       )}
     </div>
