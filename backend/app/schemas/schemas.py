@@ -64,3 +64,36 @@ class UpdateResearchBody(BaseModel):
     common_misconceptions: str | None = None
     related_topics: str | None = None
     open_questions: str | None = None
+
+
+class CreateShareBody(BaseModel):
+    resource_id: str
+    recipient_id: str
+
+
+class ShareResponse(BaseModel):
+    id: str
+    resource_id: str
+    recipient_id: str
+    recipient_email: str
+    created_at: str
+
+
+class UserSearchResult(BaseModel):
+    id: str
+    email: str
+
+
+class SharedResourceNode(BaseModel):
+    id: str
+    name: str
+    is_folder: bool
+    status: str | None
+    children: list["SharedResourceNode"] = []
+
+
+class SharedWithMeGroup(BaseModel):
+    owner_id: str
+    owner_email: str
+    share_ids: list[str]  # all share IDs from this owner — recipient can leave any/all
+    nodes: list[SharedResourceNode]

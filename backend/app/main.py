@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import FRONTEND_URL
 from app.core.limiter import limiter
 from app.database import create_all_tables
-from app.routers import auth, topics, categories
+from app.routers import auth, topics, categories, shares, shares
 
 
 @asynccontextmanager
@@ -35,3 +35,5 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(topics.router)
 app.include_router(categories.router)
+app.include_router(shares.router)
+app.include_router(shares.router)

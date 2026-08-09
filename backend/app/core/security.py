@@ -14,7 +14,8 @@ from app.database import get_db
 from app.models.models import OAuthAccount, User
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7   # 7 days
+REFRESH_TOKEN_EXPIRE_DAYS = 30               # 30 days
 RESET_TOKEN_EXPIRE_MINUTES = 10
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -32,6 +33,23 @@ def verify_password(plain: str, hashed: str) -> bool:
 def create_access_token(user_id: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     return jwt.encode({"sub": user_id, "exp": expire}, JWT_SECRET, algorithm=ALGORITHM)
+
+
+def create_refresh_token(user_id: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    return jwt.encode({"sub": user_id, "exp": expire, "type": "refresh"}, JWT_SECRET, algorithm=ALGORITHM)
+
+
+def verify_refresh_token(token: str) -> str | None:
+    """Verify a refresh token and return the user_id, or None if invalid."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+    if payload.get("type") != "refresh":
+        return None
+    user_id = payload.get("sub")
+    return user_id if isinstance(user_id, str) else None
 
 
 def create_password_reset_token(email: str) -> str:

@@ -72,7 +72,7 @@ export default function AuthPage() {
 
       const fn = mode === 'login' ? login : register;
       const result = await fn({ email: email.trim(), password }).unwrap();
-      dispatch(setCredentials({ token: result.token, email: result.email }));
+      dispatch(setCredentials({ token: result.token, refresh_token: result.refresh_token, email: result.email, id: result.id }));
     } catch (err) {
       setError(err?.data?.detail || 'Something went wrong. Please try again.');
     }

@@ -4,6 +4,7 @@ import { toggleFolder, expandFolder, setActiveTopicId } from '../store/topicsSli
 import { useDeleteMainTopicMutation, useRenameMainTopicMutation, useCreateMainTopicMutation, useCreateTopicMutation } from '../services/api.js';
 import FileRow from './FileRow.jsx';
 import ConfirmDialog from './shared/ConfirmDialog.jsx';
+import ShareDialog from './ShareDialog.jsx';
 
 function ChevronIcon({ expanded }) {
   return (
@@ -112,6 +113,7 @@ export default function FolderRow({ folder, depth = 0 }) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const renameRef = useRef(null);
   const [deleteMainTopic] = useDeleteMainTopicMutation();
   const [renameMainTopic] = useRenameMainTopicMutation();
@@ -169,6 +171,12 @@ export default function FolderRow({ folder, depth = 0 }) {
         onCancel={() => setConfirmOpen(false)}
       />
 
+      <ShareDialog
+        resourceId={folder.id}
+        open={shareDialogOpen}
+        onClose={() => setShareDialogOpen(false)}
+      />
+
       <li>
         <div
           role="button"
@@ -220,6 +228,15 @@ export default function FolderRow({ folder, depth = 0 }) {
             aria-label={`Add subcategory to "${folder.name}"`} title="Add subcategory">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
               <path d="M3.75 3A1.75 1.75 0 002 4.75v3.26a3.235 3.235 0 011.75-.51h12.5c.644 0 1.245.188 1.75.51V6.75A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75zM3.75 9A1.75 1.75 0 002 10.75v4.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-4.5A1.75 1.75 0 0016.25 9H3.75z" />
+            </svg>
+          </button>
+          {/* Share folder */}
+          <button type="button" onClick={(e) => { e.stopPropagation(); setShareDialogOpen(true); }}
+            className="shrink-0 text-gray-400 hover:text-brand-500 dark:text-gray-500 dark:hover:text-brand-400
+                       transition-colors p-0.5 rounded focus:outline-none focus:ring-2 focus:ring-brand-400"
+            aria-label={`Share "${folder.name}"`} title="Share folder">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4" aria-hidden="true">
+              <path d="M13 4.5a2.5 2.5 0 11.702 1.737L6.97 9.604a2.518 2.518 0 010 .792l6.733 3.367a2.5 2.5 0 11-.671 1.341l-6.733-3.367a2.5 2.5 0 110-3.475l6.733-3.366A2.52 2.52 0 0113 4.5z" />
             </svg>
           </button>
           {/* Delete folder */}

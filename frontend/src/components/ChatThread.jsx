@@ -48,7 +48,7 @@ function PencilIcon() {
   );
 }
 
-function AssistantMessage({ topicId, content: initialContent, savedNoteId: initialNoteId }) {
+function AssistantMessage({ topicId, content: initialContent, savedNoteId: initialNoteId, isReadOnly }) {
   const [savedNoteId, setSavedNoteId] = useState(initialNoteId ?? null);
   const [content, setContent] = useState(initialContent);
   const [isEditing, setIsEditing] = useState(false);
@@ -138,7 +138,7 @@ function AssistantMessage({ topicId, content: initialContent, savedNoteId: initi
         )}
         {!isEditing && (
           <div className="absolute top-2 right-2 flex gap-1">
-            {isSaved && (
+            {!isReadOnly && isSaved && (
               <button type="button" onClick={startEditing} disabled={isBusy} title="Edit note" aria-label="Edit note"
                 className="p-1 rounded text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300
                            opacity-0 group-hover:opacity-100 transition-opacity
@@ -146,15 +146,17 @@ function AssistantMessage({ topicId, content: initialContent, savedNoteId: initi
                 <PencilIcon />
               </button>
             )}
-            <button type="button" onClick={handleBookmarkClick} disabled={isBusy}
-              title={isSaved ? 'Remove saved note' : 'Save as note'}
-              aria-label={isSaved ? 'Remove saved note' : 'Save as note'}
-              className={`p-1 rounded transition-colors
-                ${isSaved ? 'text-brand-500 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300'
-                          : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'}
-                disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand-400`}>
-              {isSaved ? <BookmarkFilledIcon /> : <BookmarkOutlineIcon />}
-            </button>
+            {!isReadOnly && (
+              <button type="button" onClick={handleBookmarkClick} disabled={isBusy}
+                title={isSaved ? 'Remove saved note' : 'Save as note'}
+                aria-label={isSaved ? 'Remove saved note' : 'Save as note'}
+                className={`p-1 rounded transition-colors
+                  ${isSaved ? 'text-brand-500 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300'
+                            : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'}
+                  disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand-400`}>
+                {isSaved ? <BookmarkFilledIcon /> : <BookmarkOutlineIcon />}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -191,7 +193,7 @@ function AssistantMessage({ topicId, content: initialContent, savedNoteId: initi
             }
           </div>
         )}
-        {!isEditing && (
+        {!isEditing && !isReadOnly && (
           <button type="button" onClick={startEditing} title="Edit" aria-label="Edit response"
             className="absolute top-2 right-2 p-1 rounded text-gray-400 dark:text-gray-500
                        hover:text-gray-600 dark:hover:text-gray-300
@@ -201,7 +203,7 @@ function AssistantMessage({ topicId, content: initialContent, savedNoteId: initi
           </button>
         )}
       </div>
-      {!isEditing && (
+      {!isEditing && !isReadOnly && (
         <button type="button" onClick={handleBookmarkClick} disabled={isBusy}
           title={isSaved ? 'Remove saved note' : 'Save as note'}
           aria-label={isSaved ? 'Remove saved note' : 'Save as note'}
@@ -226,7 +228,7 @@ function UserMessage({ content }) {
   );
 }
 
-export default function ChatThread({ topicId, savedNotes }) {
+export default function ChatThread({ topicId, savedNotes, isReadOnly }) {
   const dispatch = useDispatch();
   const session = useSelector((state) => state.chat.sessions[topicId]);
 
@@ -252,6 +254,7 @@ export default function ChatThread({ topicId, savedNotes }) {
                 topicId={topicId}
                 content={msg.content}
                 savedNoteId={msg.noteId ?? null}
+                isReadOnly={isReadOnly}
               />
         )}
       </div>

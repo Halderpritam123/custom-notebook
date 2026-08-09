@@ -8,7 +8,7 @@ import re
 from fastapi import HTTPException
 from openai import OpenAI
 
-from app.config import LLM_BASE_URL, LLM_MODEL, OPENAI_API_KEY
+from app.config import LLM_BASE_URL, LLM_MODEL, GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ CHAT_SYSTEM_TEMPLATE = (
 def _get_client() -> OpenAI:
     global _client
     if _client is None:
-        _client = OpenAI(api_key=OPENAI_API_KEY, base_url=LLM_BASE_URL)
+        _client = OpenAI(api_key=GEMINI_API_KEY, base_url=LLM_BASE_URL)
     return _client
 
 

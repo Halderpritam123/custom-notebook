@@ -39,7 +39,7 @@ function BookmarkFilledIcon() {
   );
 }
 
-function FieldSection({ topicId, fieldKey, label, content, onSaved }) {
+function FieldSection({ topicId, fieldKey, label, content, onSaved, isReadOnly }) {
   const [editing, setEditing]     = useState(false);
   const [draft, setDraft]         = useState('');
   const [collapsing, setCollapsing] = useState(false);
@@ -78,7 +78,7 @@ function FieldSection({ topicId, fieldKey, label, content, onSaved }) {
         <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
           {label}
         </h3>
-        {!editing && (
+        {!editing && !isReadOnly && (
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
               type="button"
@@ -145,7 +145,7 @@ function FieldSection({ topicId, fieldKey, label, content, onSaved }) {
   );
 }
 
-export default function ResearchView({ topicId, research, onResearchUpdated }) {
+export default function ResearchView({ topicId, research, onResearchUpdated, isReadOnly }) {
   if (!research) return null;
 
   return (
@@ -160,6 +160,7 @@ export default function ResearchView({ topicId, research, onResearchUpdated }) {
             label={label}
             content={research[key]}
             onSaved={onResearchUpdated}
+            isReadOnly={isReadOnly}
           />
         ))}
       </div>

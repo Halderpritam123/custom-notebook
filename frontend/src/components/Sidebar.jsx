@@ -4,8 +4,9 @@ import { setSearchQuery, setActiveTopicId } from '../store/topicsSlice.js';
 import { logout } from '../store/authSlice.js';
 import { useTheme } from '../hooks/useTheme.js';
 import TopicTree from './TopicTree.jsx';
+import SharedWithMeSection from './SharedWithMeSection.jsx';
 
-export default function Sidebar() {
+export default function Sidebar({ width }) {
   const dispatch = useDispatch();
   const searchQuery = useSelector((state) => state.topics.searchQuery);
   const email = useSelector((state) => state.auth.email);
@@ -20,7 +21,7 @@ export default function Sidebar() {
   const toggleMode = (mode) => setAddMode((prev) => (prev === mode ? null : mode));
 
   return (
-    <aside className="w-72 shrink-0 flex flex-col h-full bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800">
+    <aside style={{ width }} className="shrink-0 flex flex-col h-full bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 overflow-hidden">
       <div className="px-4 py-4 border-b border-gray-200 dark:border-gray-800">
         <div className="flex items-center justify-between mb-1">
           <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">Notebook</h1>
@@ -93,7 +94,10 @@ export default function Sidebar() {
             aria-label="Search topics" />
         </div>
       </div>
-      <TopicTree addMode={addMode} onAddDone={() => setAddMode(null)} />
+      <div className="flex-1 flex flex-col overflow-y-auto">
+        <TopicTree addMode={addMode} onAddDone={() => setAddMode(null)} />
+        <SharedWithMeSection />
+      </div>
     </aside>
   );
 }

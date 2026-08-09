@@ -6,6 +6,7 @@ const topicsSlice = createSlice({
     searchQuery: '',
     activeTopicId: null,
     expandedFolderIds: [],
+    isReadOnly: false,
   },
   reducers: {
     setSearchQuery(state, action) {
@@ -13,6 +14,12 @@ const topicsSlice = createSlice({
     },
     setActiveTopicId(state, action) {
       state.activeTopicId = action.payload;
+      // Selecting a topic from your own tree always clears read-only mode.
+      // SharedWithMeSection explicitly calls setReadOnly(true) after this.
+      state.isReadOnly = false;
+    },
+    setReadOnly(state, action) {
+      state.isReadOnly = action.payload;
     },
     toggleFolder(state, action) {
       const id = action.payload;
@@ -32,5 +39,5 @@ const topicsSlice = createSlice({
   },
 });
 
-export const { setSearchQuery, setActiveTopicId, toggleFolder, expandFolder } = topicsSlice.actions;
+export const { setSearchQuery, setActiveTopicId, setReadOnly, toggleFolder, expandFolder } = topicsSlice.actions;
 export default topicsSlice.reducer;

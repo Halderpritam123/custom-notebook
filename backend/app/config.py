@@ -9,9 +9,9 @@ load_dotenv()
 DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///:memory:")
 JWT_SECRET: str = os.getenv("JWT_SECRET", "fallback-secret-change-in-production")
 
-LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o")
-LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://models.inference.ai.azure.com")
-OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-2.5-flash")
+LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
 FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
 BACKEND_URL: str = os.getenv("BACKEND_URL", "http://localhost:8000")
@@ -21,3 +21,5 @@ GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET: str = os.getenv("GITHUB_CLIENT_SECRET", "")
+
+REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379")

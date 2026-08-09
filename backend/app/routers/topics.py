@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.limiter import limiter
+from app.core.permissions import require_topic_access
 from app.core.security import get_current_user
 from app.database import SessionLocal, get_db
 from app.models.models import Research, SavedNote, Topic, User
@@ -17,6 +18,7 @@ from app.schemas.schemas import (
     ChatBody, CreateNoteBody, UpdateNoteBody, CreateTopicBody, RenameBody, UpdateStatusBody,
     UpdateResearchBody,
 )
+from app.services.cache import cache
 from app.services.llm import generate_chat_reply, generate_research
 
 router = APIRouter(tags=["topics"])
@@ -72,6 +74,7 @@ def _serialize_full_topic(topic: Topic) -> dict:
         "id": str(topic.id),
         "name": topic.name,
         "status": topic.status,
+        "user_id": str(topic.user_id),
         "created_at": topic.created_at.isoformat() if topic.created_at else None,
         "research": _serialize_research(topic.research),
         "notes": [_serialize_note(n) for n in (topic.notes or [])],
@@ -172,6 +175,7 @@ async def create_topic(
     loop = asyncio.get_event_loop()
     _research_events[str(topic.id)] = asyncio.Event()
     background_tasks.add_task(_run_research_in_background, str(topic.id), loop)
+    cache.delete_tree(str(current_user.id))
     return _serialize_full_topic(topic)
 
 
@@ -182,43 +186,71 @@ def list_topics(db: Session = Depends(get_db), current_user: User = Depends(get_
 
 
 @router.get("/topics/{topic_id}")
-def get_topic(topic_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
-    return _serialize_full_topic(_owned_topic(topic_id, current_user, db))
+def get_topic(
+    topic_id: str,
+    topic: Topic = Depends(require_topic_access("read")),
+    db: Session = Depends(get_db),
+) -> dict:
+    # Cache hit: return cached value without DB query
+    cached = cache.get_topic(topic_id)
+    if cached is not None:
+        return cached
+
+    # Cache miss: load relations and serialize
+    db.refresh(topic)
+    topic_with_relations = (
+        db.query(Topic)
+        .filter(Topic.id == topic_id)
+        .options(joinedload(Topic.research), joinedload(Topic.notes))
+        .first()
+    )
+    data = _serialize_full_topic(topic_with_relations)
+    cache.set_topic(topic_id, data)
+    return data
 
 
 @router.patch("/topics/{topic_id}/status")
 def update_topic_status(
     topic_id: str, body: UpdateStatusBody,
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+    topic: Topic = Depends(require_topic_access("write")),
+    db: Session = Depends(get_db),
 ) -> dict:
     if body.status not in VALID_STATUSES:
         raise HTTPException(status_code=422, detail=f"Invalid status '{body.status}'")
-    topic = _owned_topic(topic_id, current_user, db, load_relations=False)
     topic.status = body.status
     db.commit()
     db.refresh(topic)
+    cache.delete_topic(topic_id)
     return _serialize_topic_list_item(topic)
 
 
 @router.patch("/topics/{topic_id}/name")
 def rename_topic(
     topic_id: str, body: RenameBody,
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+    topic: Topic = Depends(require_topic_access("write")),
+    db: Session = Depends(get_db),
 ) -> dict:
     if not body.name or not body.name.strip():
         raise HTTPException(status_code=422, detail="Name must not be empty")
-    topic = _owned_topic(topic_id, current_user, db, load_relations=False)
     topic.name = body.name.strip()
     db.commit()
     db.refresh(topic)
+    cache.delete_topic(topic_id)
+    cache.delete_tree(str(topic.user_id))
     return _serialize_topic_list_item(topic)
 
 
 @router.delete("/topics/{topic_id}", status_code=204)
-def delete_topic(topic_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Response:
-    topic = _owned_topic(topic_id, current_user, db, load_relations=False)
+def delete_topic(
+    topic_id: str,
+    topic: Topic = Depends(require_topic_access("write")),
+    db: Session = Depends(get_db),
+) -> Response:
+    user_id = str(topic.user_id)
     db.delete(topic)
     db.commit()
+    cache.delete_topic(topic_id)
+    cache.delete_tree(user_id)
     return Response(status_code=204)
 
 
@@ -227,9 +259,9 @@ def delete_topic(topic_id: str, db: Session = Depends(get_db), current_user: Use
 async def retry_research(
     request: Request,
     topic_id: str, background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+    topic: Topic = Depends(require_topic_access("write")),
+    db: Session = Depends(get_db),
 ) -> dict:
-    topic = _owned_topic(topic_id, current_user, db)
     topic.status = "researching"
     existing = db.query(Research).filter(Research.topic_id == topic_id).first()
     if existing:
@@ -239,6 +271,7 @@ async def retry_research(
     loop = asyncio.get_event_loop()
     _research_events[str(topic.id)] = asyncio.Event()
     background_tasks.add_task(_run_research_in_background, str(topic.id), loop)
+    cache.delete_topic(topic_id)
     return _serialize_full_topic(topic)
 
 
@@ -264,9 +297,15 @@ async def status_stream(
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    topic = db.query(Topic).filter(Topic.id == topic_id, Topic.user_id == user.id).first()
+    topic = db.query(Topic).filter(Topic.id == topic_id).first()
     if topic is None:
-        raise HTTPException(status_code=404, detail="Topic not found")
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    # Allow owner OR share recipient (consistent with require_topic_access("read"))
+    from app.services.sharing import sharing_service as _ss
+    is_owner = str(topic.user_id) == str(user.id)
+    if not is_owner and not _ss.has_share_access(db, user.id, topic_id):
+        raise HTTPException(status_code=403, detail="Access denied.")
 
     async def event_generator():
         # Already done — send immediately
@@ -313,9 +352,9 @@ async def status_stream(
 @router.patch("/topics/{topic_id}/research", status_code=200)
 def update_research(
     topic_id: str, body: UpdateResearchBody,
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+    topic: Topic = Depends(require_topic_access("write")),
+    db: Session = Depends(get_db),
 ) -> dict:
-    topic = _owned_topic(topic_id, current_user, db)
     research = db.query(Research).filter(Research.topic_id == topic_id).first()
     if research is None:
         raise HTTPException(status_code=404, detail="Research not found")
@@ -323,6 +362,7 @@ def update_research(
         setattr(research, field, value)
     db.commit()
     db.refresh(research)
+    cache.delete_topic(topic_id)
     return _serialize_research(research)
 
 
@@ -331,9 +371,9 @@ def update_research(
 def chat(
     request: Request,
     topic_id: str, body: ChatBody,
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+    topic: Topic = Depends(require_topic_access("write")),
+    db: Session = Depends(get_db),
 ) -> dict:
-    topic = _owned_topic(topic_id, current_user, db)
     # Walk ancestors for full context path
     ancestor_names = []
     current = topic
@@ -352,42 +392,45 @@ def chat(
 @router.post("/topics/{topic_id}/notes", status_code=201)
 def create_note(
     topic_id: str, body: CreateNoteBody,
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+    topic: Topic = Depends(require_topic_access("write")),
+    db: Session = Depends(get_db),
 ) -> dict:
-    topic = _owned_topic(topic_id, current_user, db)
     note = SavedNote(topic_id=topic.id, content=body.content, created_at=datetime.now(timezone.utc))
     db.add(note)
     db.commit()
     db.refresh(note)
+    cache.delete_topic(topic_id)
     return _serialize_note(note)
 
 
 @router.patch("/topics/{topic_id}/notes/{note_id}", status_code=200)
 def update_note(
     topic_id: str, note_id: str, body: UpdateNoteBody,
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+    topic: Topic = Depends(require_topic_access("write")),
+    db: Session = Depends(get_db),
 ) -> dict:
     if not body.content or not body.content.strip():
         raise HTTPException(status_code=422, detail="Content must not be empty")
-    _owned_topic(topic_id, current_user, db)
     note = db.query(SavedNote).filter(SavedNote.id == note_id, SavedNote.topic_id == topic_id).first()
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
     note.content = body.content.strip()
     db.commit()
     db.refresh(note)
+    cache.delete_topic(topic_id)
     return _serialize_note(note)
 
 
 @router.delete("/topics/{topic_id}/notes/{note_id}", status_code=204)
 def delete_note(
     topic_id: str, note_id: str,
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+    topic: Topic = Depends(require_topic_access("write")),
+    db: Session = Depends(get_db),
 ) -> Response:
-    _owned_topic(topic_id, current_user, db)
     note = db.query(SavedNote).filter(SavedNote.id == note_id, SavedNote.topic_id == topic_id).first()
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
     db.delete(note)
     db.commit()
+    cache.delete_topic(topic_id)
     return Response(status_code=204)

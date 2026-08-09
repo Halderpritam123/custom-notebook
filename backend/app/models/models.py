@@ -4,7 +4,7 @@ models.py — all SQLAlchemy ORM models.
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Text, types
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Text, UniqueConstraint, types
 from sqlalchemy.orm import backref, relationship
 
 from app.database import Base
@@ -126,3 +126,25 @@ class SavedNote(Base):
 
 Index("ix_saved_notes_topic_id", SavedNote.topic_id)
 Index("ix_oauth_accounts_user_id", OAuthAccount.user_id)
+
+
+class Share(Base):
+    __tablename__ = "shares"
+
+    id = Column(PortableUUID, primary_key=True, default=uuid4)
+    owner_id = Column(PortableUUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    recipient_id = Column(PortableUUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    resource_id = Column(PortableUUID, ForeignKey("topics.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    owner = relationship("User", foreign_keys=[owner_id])
+    recipient = relationship("User", foreign_keys=[recipient_id])
+    resource = relationship("Topic")
+
+    __table_args__ = (
+        UniqueConstraint("owner_id", "recipient_id", "resource_id", name="uq_shares_owner_recipient_resource"),
+    )
+
+
+Index("ix_shares_recipient_id", Share.recipient_id)
+Index("ix_shares_resource_id", Share.resource_id)

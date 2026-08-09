@@ -16,7 +16,7 @@ export default function AuthCallback() {
     const error = params.get('error');
 
     if (token && email) {
-      dispatch(setCredentials({ token, email }));
+      dispatch(setCredentials({ token, refresh_token: params.get('refresh_token'), email, id: params.get('id') || undefined }));
       // Clean up URL and navigate to app root
       window.history.replaceState({}, '', '/');
     } else {

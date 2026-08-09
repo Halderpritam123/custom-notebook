@@ -14,7 +14,8 @@ from app.config import (
     GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET,
 )
 from app.core.security import (
-    create_access_token, create_password_reset_token, get_current_user,
+    create_access_token, create_refresh_token, verify_refresh_token,
+    create_password_reset_token, get_current_user,
     hash_password, verify_password, verify_password_reset_token, find_or_create_oauth_user,
 )
 from app.database import get_db
@@ -41,7 +42,8 @@ def register(body: RegisterBody, db: Session = Depends(get_db)) -> dict:
     db.add(user)
     db.commit()
     db.refresh(user)
-    return {"token": create_access_token(str(user.id)), "email": user.email}
+    uid = str(user.id)
+    return {"token": create_access_token(uid), "refresh_token": create_refresh_token(uid), "email": user.email, "id": uid}
 
 
 @router.post("/login")
@@ -49,7 +51,22 @@ def login(body: LoginBody, db: Session = Depends(get_db)) -> dict:
     user = db.query(User).filter(User.email == body.email.lower()).first()
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    return {"token": create_access_token(str(user.id)), "email": user.email}
+    uid = str(user.id)
+    return {"token": create_access_token(uid), "refresh_token": create_refresh_token(uid), "email": user.email, "id": uid}
+
+
+@router.post("/refresh")
+def refresh_token(body: dict, db: Session = Depends(get_db)) -> dict:
+    """Exchange a valid refresh token for a new access token + refresh token pair."""
+    token = body.get("refresh_token", "")
+    user_id = verify_refresh_token(token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    uid = str(user.id)
+    return {"token": create_access_token(uid), "refresh_token": create_refresh_token(uid), "email": user.email, "id": uid}
 
 
 @router.post("/forgot-password")
@@ -129,7 +146,8 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
     if user is None:
         return RedirectResponse(f"{FRONTEND_URL}?error=registration_closed")
     token = create_access_token(str(user.id))
-    return RedirectResponse(f"{FRONTEND_URL}/auth/callback?token={token}&email={email}")
+    refresh = create_refresh_token(str(user.id))
+    return RedirectResponse(f"{FRONTEND_URL}/auth/callback?token={token}&refresh_token={refresh}&email={email}")
 
 
 # ── GitHub OAuth ──────────────────────────────────────────────────────────────
@@ -178,4 +196,5 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
     if user is None:
         return RedirectResponse(f"{FRONTEND_URL}?error=registration_closed")
     token = create_access_token(str(user.id))
-    return RedirectResponse(f"{FRONTEND_URL}/auth/callback?token={token}&email={email}")
+    refresh = create_refresh_token(str(user.id))
+    return RedirectResponse(f"{FRONTEND_URL}/auth/callback?token={token}&refresh_token={refresh}&email={email}")

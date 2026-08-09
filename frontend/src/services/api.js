@@ -1,5 +1,6 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import { clearSession } from '../store/chatSlice.js';
+import { setCredentials, logout } from '../store/authSlice.js';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -53,30 +54,61 @@ function findFolder(nodes, id) {
 
 // ─── API slice ────────────────────────────────────────────────────────────────
 
+const rawBaseQuery = fetchBaseQuery({
+  baseUrl,
+  prepareHeaders: (headers, { getState, endpoint }) => {
+    const token = getState().auth.token;
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    if (endpoint === 'getTopicTree') {
+      const etag = sessionStorage.getItem('etag:topic-tree');
+      if (etag) headers.set('If-None-Match', etag);
+    }
+    return headers;
+  },
+  responseHandler: async (response) => {
+    const etag = response.headers.get('etag');
+    if (etag && response.url?.includes('/topic-tree')) {
+      sessionStorage.setItem('etag:topic-tree', etag);
+    }
+    if (response.status === 304) return undefined;
+    const text = await response.text();
+    return text ? JSON.parse(text) : undefined;
+  },
+});
+
+// Wraps rawBaseQuery: on 401, attempts one silent token refresh then retries.
+async function baseQueryWithReauth(args, api, extraOptions) {
+  let result = await rawBaseQuery(args, api, extraOptions);
+
+  if (result?.error?.status === 401) {
+    const refreshToken = api.getState().auth.refreshToken;
+    if (refreshToken) {
+      // Try to get a new token pair
+      const refreshResult = await rawBaseQuery(
+        { url: '/auth/refresh', method: 'POST', body: { refresh_token: refreshToken } },
+        api,
+        extraOptions,
+      );
+      if (refreshResult?.data) {
+        api.dispatch(setCredentials(refreshResult.data));
+        // Retry the original request with the new token
+        result = await rawBaseQuery(args, api, extraOptions);
+      } else {
+        // Refresh failed — session is dead, log out
+        api.dispatch(logout());
+      }
+    } else {
+      api.dispatch(logout());
+    }
+  }
+
+  return result;
+}
+
 export const apiSlice = createApi({
   reducerPath: 'api',
-  baseQuery: fetchBaseQuery({
-    baseUrl,
-    prepareHeaders: (headers, { getState, endpoint }) => {
-      const token = getState().auth.token;
-      if (token) headers.set('Authorization', `Bearer ${token}`);
-      if (endpoint === 'getTopicTree') {
-        const etag = sessionStorage.getItem('etag:topic-tree');
-        if (etag) headers.set('If-None-Match', etag);
-      }
-      return headers;
-    },
-    responseHandler: async (response) => {
-      const etag = response.headers.get('etag');
-      if (etag && response.url?.includes('/topic-tree')) {
-        sessionStorage.setItem('etag:topic-tree', etag);
-      }
-      if (response.status === 304) return undefined;
-      const text = await response.text();
-      return text ? JSON.parse(text) : undefined;
-    },
-  }),
-  tagTypes: ['Topics', 'Topic', 'TopicTree'],
+  baseQuery: baseQueryWithReauth,
+  tagTypes: ['Topics', 'Topic', 'TopicTree', 'Shares', 'SharedWithMe'],
   endpoints: (builder) => ({
 
     // Auth
@@ -285,6 +317,51 @@ export const apiSlice = createApi({
         } catch {}
       },
     }),
+
+    // User search
+    searchUsers: builder.query({
+      query: (q) => `/users/search?q=${encodeURIComponent(q)}`,
+    }),
+
+    // Shares for a resource
+    getSharesForResource: builder.query({
+      query: (resourceId) => `/shares?resource_id=${resourceId}`,
+      providesTags: (result, error, resourceId) => [{ type: 'Shares', id: resourceId }],
+    }),
+
+    // Create share
+    createShare: builder.mutation({
+      query: ({ resourceId, recipientId }) => ({
+        url: '/shares',
+        method: 'POST',
+        body: { resource_id: resourceId, recipient_id: recipientId },
+      }),
+      invalidatesTags: (result, error, { resourceId }) => [
+        'SharedWithMe',
+        { type: 'Shares', id: resourceId },
+      ],
+    }),
+
+    // Revoke share
+    revokeShare: builder.mutation({
+      query: ({ shareId }) => ({ url: `/shares/${shareId}`, method: 'DELETE' }),
+      invalidatesTags: (result, error, { resourceId }) => [
+        'SharedWithMe',
+        { type: 'Shares', id: resourceId },
+      ],
+    }),
+
+    // Recipient removes their own access
+    leaveShare: builder.mutation({
+      query: ({ shareId }) => ({ url: `/shared-with-me/${shareId}`, method: 'DELETE' }),
+      invalidatesTags: ['SharedWithMe'],
+    }),
+
+    // Shared with me tree
+    getSharedWithMe: builder.query({
+      query: () => '/shared-with-me',
+      providesTags: ['SharedWithMe'],
+    }),
   }),
 });
 
@@ -309,4 +386,10 @@ export const {
   useDeleteNoteMutation,
   useRetryResearchMutation,
   useUpdateResearchMutation,
+  useSearchUsersQuery,
+  useGetSharesForResourceQuery,
+  useCreateShareMutation,
+  useRevokeShareMutation,
+  useLeaveShareMutation,
+  useGetSharedWithMeQuery,
 } = apiSlice;

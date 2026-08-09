@@ -13,6 +13,8 @@ from app.database import get_db
 from app.models.models import Topic, User
 from app.routers.topics import _serialize_main_topic, _serialize_topic_list_item
 from app.schemas.schemas import CreateCategoryBody, RenameBody
+from app.services.cache import cache
+from app.services.sharing import sharing_service
 
 router = APIRouter(tags=["categories"])
 
@@ -56,6 +58,7 @@ def create_category(
     db.add(topic)
     db.commit()
     db.refresh(topic)
+    cache.delete_tree(str(current_user.id))
     return _serialize_main_topic(topic)
 
 
@@ -68,6 +71,7 @@ def delete_category(
     topic = _get_owned_folder(topic_id, current_user, db)
     db.delete(topic)
     db.commit()
+    cache.delete_tree(str(current_user.id))
     return Response(status_code=204)
 
 
@@ -84,6 +88,7 @@ def rename_category(
     topic.name = body.name.strip()
     db.commit()
     db.refresh(topic)
+    cache.delete_tree(str(current_user.id))
     return _serialize_main_topic(topic)
 
 
@@ -93,7 +98,20 @@ def get_topic_tree(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    # Load all topics with one level of children eagerly; recursion happens in serializer
+    # Cache hit: return cached value without DB query
+    cached = cache.get_tree(str(current_user.id))
+    if cached is not None:
+        body = json.dumps(cached, separators=(",", ":"), sort_keys=True)
+        etag = f'"{hashlib.md5(body.encode()).hexdigest()}"'
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag})
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={"ETag": etag, "Cache-Control": "no-cache"},
+        )
+
+    # Cache miss: load all topics with one level of children eagerly; recursion happens in serializer
     all_topics = (
         db.query(Topic)
         .filter(Topic.user_id == current_user.id)
@@ -104,12 +122,20 @@ def get_topic_tree(
     # Root nodes: topics/folders with no parent
     roots = [t for t in all_topics if t.parent_id is None]
 
+    # Build shared-with-me groups
+    shared_with_me = sharing_service.get_shared_with_me(db, current_user.id)
+    shared_with_me_data = [g.model_dump() for g in shared_with_me]
+
     payload = {
         "nodes": [
             _serialize_main_topic(t) if t.is_folder else _serialize_topic_list_item(t)
             for t in roots
-        ]
+        ],
+        "shared_with_me": shared_with_me_data,
     }
+
+    # Store in cache before returning
+    cache.set_tree(str(current_user.id), payload)
 
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True)
     etag = f'"{hashlib.md5(body.encode()).hexdigest()}"'
