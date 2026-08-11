@@ -20,7 +20,23 @@ const markdownComponents = {
   li:     ({ children }) => <li className="text-sm text-gray-700 dark:text-gray-300">{children}</li>,
   strong: ({ children }) => <strong className="font-semibold text-gray-800 dark:text-gray-200">{children}</strong>,
   em:     ({ children }) => <em className="italic text-gray-600 dark:text-gray-400">{children}</em>,
-  code:   ({ children }) => <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs font-mono text-gray-800 dark:text-gray-200">{children}</code>,
+  code:   ({ children, className }) => {
+    // fenced code block — className will be "language-xxx"
+    if (className) {
+      return (
+        <code className={`${className} block text-xs font-mono text-gray-800 dark:text-gray-200`}>
+          {children}
+        </code>
+      );
+    }
+    // inline code
+    return <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs font-mono text-gray-800 dark:text-gray-200">{children}</code>;
+  },
+  pre: ({ children }) => (
+    <pre className="my-3 rounded-lg bg-gray-950 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 overflow-x-auto text-xs leading-relaxed">
+      {children}
+    </pre>
+  ),
 };
 
 function PencilIcon() {

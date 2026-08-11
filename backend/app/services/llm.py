@@ -19,21 +19,22 @@ REQUIRED_KEYS = {
     "real_world_applications", "common_misconceptions", "related_topics", "open_questions",
 }
 
-RESEARCH_SYSTEM_PROMPT = "You are a subject matter expert. Always respond in valid JSON only."
+RESEARCH_SYSTEM_PROMPT = "You are a subject matter expert. Always respond in valid JSON only. Use markdown formatting in your values including code blocks where relevant."
 
 RESEARCH_USER_TEMPLATE = """Research the following topic and return a JSON object with exactly these keys:
 Topic: {topic_name}{category_line}
 {{
-  "summary": "2-3 sentence overview of what this topic is",
-  "key_concepts": "the 5-7 core ideas or pillars needed to understand this topic (markdown list)",
+  "summary": "2-3 sentence overview of what this topic is. If the topic is technical (programming, math, science), include a minimal inline code example using a markdown code block.",
+  "key_concepts": "the 5-7 core ideas or pillars needed to understand this topic. Use a markdown list. For each concept that benefits from an example, include a short code snippet in a markdown code block right below the concept.",
   "background_context": "origin, history, or why this topic exists and matters",
-  "how_it_works": "the mechanics or inner logic — internals for tech, cause-effect for history, reasoning for theories",
-  "real_world_applications": "concrete examples of where this shows up in practice (markdown list)",
-  "common_misconceptions": "things people often get wrong about this topic (markdown list)",
+  "how_it_works": "the mechanics or inner logic — internals for tech, cause-effect for history, reasoning for theories. For technical topics include a concrete code example in a markdown code block that demonstrates the core mechanism.",
+  "real_world_applications": "concrete examples of where this shows up in practice. Use a markdown list. For programming topics, include a practical code snippet per application where it helps clarify.",
+  "common_misconceptions": "things people often get wrong about this topic. Use a markdown list. Where useful, show a wrong vs correct code example to illustrate the misconception.",
   "related_topics": "comma separated related topics worth exploring",
   "open_questions": "debated, unresolved, or interesting questions worth exploring further (markdown list)"
 }}
-Research this topic specifically in the context of the domain/category above if provided."""
+Research this topic specifically in the context of the domain/category above if provided.
+IMPORTANT: All code blocks must use proper markdown fenced code blocks with the language specified, e.g. ```javascript ... ``` or ```python ... ```"""
 
 CHAT_SYSTEM_TEMPLATE = (
     'You are a knowledgeable tutor. The user is learning about "{topic_name}"{category_part}. '
@@ -71,7 +72,28 @@ def generate_research(topic_name: str, category_name: str | None = None) -> dict
         logger.error("LLM research response missing keys: %s", missing)
         raise HTTPException(status_code=500, detail="Research generation failed")
 
-    return {key: data[key] for key in REQUIRED_KEYS}
+    return {key: _normalize_field(data[key]) for key in REQUIRED_KEYS}
+
+
+def _normalize_field(value) -> str:
+    """Coerce any LLM field value to a plain markdown string.
+
+    Gemini sometimes returns list fields as a JSON object like
+    {"- item one": "...", "- item two": "..."} or a plain Python set/list
+    instead of a markdown string.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(f"- {item}" for item in value)
+    if isinstance(value, dict):
+        lines = []
+        for k, v in value.items():
+            key = k.lstrip("- ").strip()
+            val = str(v).strip() if v else ""
+            lines.append(f"- **{key}**{': ' + val if val else ''}")
+        return "\n".join(lines)
+    return str(value)
 
 
 def generate_chat_reply(topic_name: str, history: list, category_name: str | None = None) -> str:

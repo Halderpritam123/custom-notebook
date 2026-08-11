@@ -6,7 +6,7 @@ import { useTheme } from '../hooks/useTheme.js';
 import TopicTree from './TopicTree.jsx';
 import SharedWithMeSection from './SharedWithMeSection.jsx';
 
-export default function Sidebar({ width }) {
+export default function Sidebar({ width, isMobile, onClose }) {
   const dispatch = useDispatch();
   const searchQuery = useSelector((state) => state.topics.searchQuery);
   const email = useSelector((state) => state.auth.email);
@@ -26,7 +26,16 @@ export default function Sidebar({ width }) {
         <div className="flex items-center justify-between mb-1">
           <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">Notebook</h1>
           <div className="flex items-center gap-0.5">
-
+            {/* Close button — mobile only */}
+            {isMobile && (
+              <button type="button" onClick={onClose}
+                className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-400"
+                aria-label="Close sidebar">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                  <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                </svg>
+              </button>
+            )}
             {/* New File */}
             <button type="button" onClick={() => toggleMode('file')} title="New Topic"
               className={`p-1.5 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-brand-400
